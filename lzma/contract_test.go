@@ -21,6 +21,7 @@ package lzma_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -611,6 +612,66 @@ func TestContractOptionBounds(t *testing.T) {
 	if _, err := lzma.NewWriter(io.Discard, lzma.WithMaxDictSize(lzma.MinDictSize)); err == nil {
 		t.Error("the writer accepted WithMaxDictSize")
 	}
+}
+
+// TestContractOutputWithinDeclaredSize: nothing past the declared size is
+// handed out. A stream whose header says sixteen bytes and whose second
+// operation is a match that crosses them is ErrCorrupt, "sizes that disagree
+// with the data", and the bytes read before the error are at most sixteen
+// of the data: a match is written whole, and one that crosses the size was
+// written, and read, before the size was looked at. The same holds for an
+// LZMA2 chunk, whose header carries the size.
+func TestContractOutputWithinDeclaredSize(t *testing.T) {
+	t.Parallel()
+
+	const declared = 16
+
+	data := bytes.Repeat([]byte("abcdefgh"), 65)
+
+	check := func(t *testing.T, r io.Reader) {
+		t.Helper()
+
+		got, err := io.ReadAll(r)
+		if !errors.Is(err, lzma.ErrCorrupt) {
+			t.Errorf("%v, want an error matching ErrCorrupt", err)
+		}
+
+		if len(got) > declared || !bytes.HasPrefix(data, got) {
+			t.Errorf("%d bytes read from a stream declaring %d: %q", len(got), declared, got)
+		}
+	}
+
+	t.Run("classic", func(t *testing.T) {
+		t.Parallel()
+
+		stream := classic(t, wcase{}, data)
+		binary.LittleEndian.PutUint64(stream[5:], declared)
+
+		r, err := lzma.NewReader(bytes.NewReader(stream))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		check(t, r)
+	})
+
+	t.Run("an LZMA2 chunk", func(t *testing.T) {
+		t.Parallel()
+
+		c := w2case{}
+		chunks := lzma2(t, c, data)
+		// The chunk's uncompressed size, less one: five bits of the control
+		// byte, then two bytes.
+		chunks[0] &^= 0x1f
+		binary.BigEndian.PutUint16(chunks[1:], declared-1)
+
+		r, err := lzma.NewReader2(bytes.NewReader(chunks), c.dictSize())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		check(t, r)
+	})
 }
 
 // TestContractMaxDictSize: a classic header declaring a dictionary above
