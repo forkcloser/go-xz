@@ -10,46 +10,46 @@
 pins:
   - name: xz-utils-linux-amd64
     renovate: github-releases forkcloser/testbin
-    version: 0.3.0
+    version: 0.4.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-linux-amd64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.3.0
-      source: 719825c7485a2afca88371ff2371873f48698df0696da19e7a36fe5dfa12afce
-      sha256: fdc39c100ac658f5433c205e95bf645a38e9bdcae6e65390052a34c299390a93
+      version: 0.4.0
+      source: c200bf54ddb36881cf78c92e703a0c61bb4aaf73768e3e04e9abfc0de72061b4
+      sha256: f39fdc0e858854a5eb9bac9cf67e739ac019fd568fddb5e0ae5c30f1d84dad5c
   - name: xz-utils-linux-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.3.0
+    version: 0.4.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-linux-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.3.0
-      source: e531b43eae1dab9a68b21cc339072011fb568abbee568855e52f014a91fb248b
-      sha256: de8210709723cc651e0ecb4091777de97ded5aecd5732371f58de3ef76061e83
+      version: 0.4.0
+      source: 4c1a091c87e632e8c445727b4b6d31b17a0df42d35a1b5a85e6cb352f0741f8f
+      sha256: c0d96fe59aa2163384ed82fa4f4d3ad7d2f1a9e74e89b32a5751357237743292
   - name: xz-utils-darwin-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.3.0
+    version: 0.4.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-darwin-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.3.0
-      source: a1a6aff7d4b71ca95f9cebc86eabc66e15fa9d6c707fadbe185a7647815a81fc
-      sha256: 8862c8be94dfcc5d2674ee7d59eacc4fbf802c40318b79e24fb957fb14c20631
+      version: 0.4.0
+      source: 751c1ec7e54d7f3554624c15d0241c476f40153f32b7d8ba23ba5bee1062e5d4
+      sha256: 761f4154de75371dc3d4ac35d29619ee5dd615a9b6c186e1f72b20592ceb0ee4
   - name: xz-utils-windows-amd64
     renovate: github-releases forkcloser/testbin
-    version: 0.3.0
+    version: 0.4.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-windows-amd64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.3.0
-      source: aad0d42f4dadbdcf2ed69254286c2b45f5546350fb9c6f3944ad893394216773
-      sha256: 43fbe01249b6c252b819a8a748d83e556898cf80fcfb6f80c56a8b7ad03d81dd
+      version: 0.4.0
+      source: d89cb64424d48fc568995f0397c22c7ec5732666583a43906f35c54db8999453
+      sha256: 7a31b1f4a7dd7224a467c88a9e7a5447d037596ad45567eef8de329b4e300e39
   - name: xz-utils-windows-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.3.0
+    version: 0.4.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-windows-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.3.0
-      source: 7fb5e963864dda3adddddd0b6621cb20dc7266685eef056d4fab340794266e21
-      sha256: 2358e320ef1d5771182c7c57e83512d21d9ffeca2167f95c88378daa5c0a6767
+      version: 0.4.0
+      source: 71b4a90c32115293b857812bc4a657674eb8d23f40c852b17d34c3a4b172d41a
+      sha256: ee7f61523a03b83a5fb0ca36170a681ea69dbd06d5268ef675cf0dcc97c2db12
