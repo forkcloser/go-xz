@@ -45,6 +45,9 @@ type Reader struct {
 	lz lzma2Cache
 	// par decodes in its place when the input allows concurrent decoding.
 	par *parallelReader
+
+	// err is what every Read returns once one has failed or ended.
+	err error
 }
 
 // streamReader decodes a single xz stream.
@@ -186,12 +189,26 @@ var errUnexpectedData = corruptf("xz: unexpected data after stream")
 // past the point of corruption; discard data received alongside such an error
 // rather than treating it as a correct prefix of the stream.
 //
-//nolint:gocognit // the loop over streams: how a single stream ends and the padding between streams, each commented in place
+// The first error is final: every later Read returns it, io.EOF included.
 func (r *Reader) Read(p []byte) (n int, err error) {
 	if r.par != nil {
 		return r.par.Read(p)
 	}
 
+	if r.err != nil {
+		return 0, r.err
+	}
+
+	n, r.err = r.readStreams(p)
+
+	return n, r.err
+}
+
+// readStreams is Read on a reader that has not failed: the streams of the
+// file, one after the other.
+//
+//nolint:gocognit // the loop over streams: how a single stream ends and the padding between streams, each commented in place
+func (r *Reader) readStreams(p []byte) (n int, err error) {
 	for n < len(p) {
 		if r.sr == nil {
 			if r.opts.singleStream {

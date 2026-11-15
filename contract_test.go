@@ -30,6 +30,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -597,6 +598,133 @@ func TestContractLyingIndex(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// readers are the three ways a file is read: in order, with workers on an
+// input that cannot be read by offset (so in order again), and with workers
+// through the indexes.
+func readers() map[string]func(file []byte) (*xz.Reader, error) {
+	return map[string]func(file []byte) (*xz.Reader, error){
+		"in order": func(file []byte) (*xz.Reader, error) {
+			return xz.NewReader(bytes.NewReader(file))
+		},
+		"workers on a stream": func(file []byte) (*xz.Reader, error) {
+			return xz.NewReader(bytes.NewBuffer(file), xz.WithWorkers(4))
+		},
+		"workers": func(file []byte) (*xz.Reader, error) {
+			return xz.NewReader(bytes.NewReader(file), xz.WithWorkers(4))
+		},
+	}
+}
+
+// TestContractReaderKeepsItsFirstError: "its first error is the one every
+// later call returns". After a Read has failed, the next ones return that
+// error and no byte, and so does WriteTo, where the bytes after the fault
+// are a whole valid file: a block header with a wrong CRC before a valid
+// block, a wrong check before the right one, a byte after the stream of a
+// single-stream reader, an index with a wrong CRC. Each of them once gave
+// the payload, or a clean io.EOF, to the caller who read again.
+func TestContractReaderKeepsItsFirstError(t *testing.T) {
+	t.Parallel()
+
+	data := cData(1 << 10)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	block := refBlocks(t, data, 0)
+	good := refStream(o, block)
+
+	header := refBlockHeader(o, block[0])
+	header[len(header)-1] ^= 0xff
+
+	// The index is the last thing before the 12 bytes of the footer, its
+	// CRC-32 the last four of it; the block's check, four bytes, ends where
+	// the index starts.
+	indexSize := (int(binary.LittleEndian.Uint32(good[len(good)-8:])) + 1) * 4
+	checkEnd := len(good) - 12 - indexSize
+
+	wrongCheck := slices.Clone(good[:checkEnd])
+	wrongCheck[checkEnd-1] ^= 0xff
+	wrongCheck = append(append(wrongCheck, good[checkEnd-4:checkEnd]...), good[checkEnd:]...)
+
+	wrongIndex := slices.Clone(good)
+	wrongIndex[len(good)-13] ^= 0xff
+
+	for _, tc := range []struct {
+		name string
+		file []byte
+		opts []xz.Option
+	}{
+		{"a block header with a wrong CRC, then the valid file", slices.Concat(good[:12], header, good[12:]), nil},
+		{"a wrong check, then the right one", wrongCheck, nil},
+		{"a byte after the stream", append(slices.Clone(good), 1), []xz.Option{xz.WithSingleStream()}},
+		{"an index with a wrong CRC", wrongIndex, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := refParse(tc.file); err == nil && len(tc.opts) == 0 {
+				t.Fatal("the reference accepts the file")
+			}
+
+			r, err := xz.NewReader(bytes.NewReader(tc.file), tc.opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var first error
+
+			buf := make([]byte, 4<<10)
+			for first == nil {
+				_, first = r.Read(buf)
+			}
+
+			if !errors.Is(first, xz.ErrCorrupt) {
+				t.Fatalf("the first error is %v, want one matching ErrCorrupt", first)
+			}
+
+			for range 3 {
+				//nolint:errorlint // the same error, not one like it
+				if n, rerr := r.Read(buf); n != 0 || rerr != first {
+					t.Fatalf("Read after %q: %d bytes, %v", first, n, rerr)
+				}
+			}
+
+			//nolint:errorlint // the same error, not one like it
+			if n, werr := r.WriteTo(io.Discard); n != 0 || werr != first {
+				t.Errorf("WriteTo after %q: %d bytes, %v", first, n, werr)
+			}
+		})
+	}
+}
+
+// TestContractReaderEndIsFinal: after io.EOF every Read returns io.EOF and
+// no byte, an empty one included, however the file is read.
+func TestContractReaderEndIsFinal(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, data, 1000))
+
+	for name, open := range readers() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r, err := open(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, rerr := io.ReadAll(r); rerr != nil || !bytes.Equal(got, data) {
+				t.Fatalf("%d bytes, %v", len(got), rerr)
+			}
+
+			for _, p := range [][]byte{nil, {}, make([]byte, 1), make([]byte, 100)} {
+				//nolint:errorlint // io.EOF itself: callers compare it with ==
+				if n, rerr := r.Read(p); n != 0 || rerr != io.EOF {
+					t.Errorf("Read of %d bytes after the end: %d, %v", len(p), n, rerr)
+				}
+			}
+		})
 	}
 }
 

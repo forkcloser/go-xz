@@ -16,7 +16,9 @@ import (
 //
 // The distinction that matters in practice is between a file that is not a
 // valid xz stream and a transport that failed underneath us: the first means
-// reject the input, the second means the read may be worth retrying.
+// reject the input, the second that the file may be fine and worth reading
+// again from its start. Either way the reader is finished: its first error
+// is the one every later call returns.
 var (
 	// ErrCorrupt reports that the data being read is not a valid xz stream:
 	// bad magic, a failed checksum, sizes that disagree, a reserved field
