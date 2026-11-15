@@ -20,6 +20,7 @@
 package xz
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"hash"
@@ -40,7 +41,11 @@ type Reader struct {
 	opts options
 
 	xz io.Reader
-	sr *streamReader
+	// hdr is where a stream header is read: padding is read through it a
+	// group at a time, and a megabyte of it is not a quarter of a million
+	// allocations.
+	hdr [HeaderLen]byte
+	sr  *streamReader
 	// lz carries the LZMA2 reader across the blocks and streams of the file.
 	lz lzma2Cache
 	// par decodes in its place when the input allows concurrent decoding.
@@ -82,7 +87,15 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 		}
 	}
 
-	if r.sr, err = o.newStreamReader(xz, &r.lz); err != nil {
+	// Every stream of the file is read, to the end of the input, so reading
+	// ahead takes nothing a caller could want back; and stream padding,
+	// read a group at a time, is then not a system call a group. A reader
+	// of one stream reads no further than that stream.
+	if !o.singleStream {
+		r.xz = bufio.NewReader(xz)
+	}
+
+	if r.sr, err = o.newStreamReader(r.xz, &r.lz, &r.hdr); err != nil {
 		switch {
 		case errors.Is(err, io.EOF):
 			err = io.ErrUnexpectedEOF
@@ -219,7 +232,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 			}
 
 			for {
-				r.sr, err = r.opts.newStreamReader(r.xz, &r.lz)
+				r.sr, err = r.opts.newStreamReader(r.xz, &r.lz, &r.hdr)
 				if !errors.Is(err, errPadding) {
 					break
 				}
@@ -251,9 +264,9 @@ var errPadding = errors.New("xz: padding (4 zero bytes) encountered")
 // newStreamReader creates a new xz stream reader using the given configuration
 // parameters. NewReader reads and checks the header of the xz stream. A
 // non-nil cache lets the stream's blocks reuse one LZMA2 reader.
-func (o *options) newStreamReader(xz io.Reader, cache *lzma2Cache) (r *streamReader, err error) {
-	data := make([]byte, HeaderLen)
-
+func (o *options) newStreamReader(
+	xz io.Reader, cache *lzma2Cache, data *[HeaderLen]byte,
+) (r *streamReader, err error) {
 	k, err := io.ReadFull(xz, data[:4])
 	if err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) && allZeros(data[:k]) {
@@ -266,7 +279,7 @@ func (o *options) newStreamReader(xz io.Reader, cache *lzma2Cache) (r *streamRea
 		return nil, err
 	}
 
-	if bytes.Equal(data[:4], []byte{0, 0, 0, 0}) {
+	if allZeros(data[:4]) {
 		return nil, errPadding
 	}
 
@@ -284,7 +297,7 @@ func (o *options) newStreamReader(xz io.Reader, cache *lzma2Cache) (r *streamRea
 		index: make([]record, 0, 4),
 		lz:    cache,
 	}
-	if err = r.h.UnmarshalBinary(data); err != nil {
+	if err = r.h.UnmarshalBinary(data[:]); err != nil {
 		return nil, err
 	}
 
