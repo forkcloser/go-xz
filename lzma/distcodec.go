@@ -80,7 +80,7 @@ func (dc *distCodec) Encode(e *rangeEncoder, dist, l uint32) (err error) {
 	return dc.alignCodec.Encode(dist, e)
 }
 
-// newDistCodec creates a new distance codec.
+// init sets the distance codec to its starting state.
 func (dc *distCodec) init() {
 	for i := range dc.posSlotCodecs {
 		dc.posSlotCodecs[i].init(posSlotBits)

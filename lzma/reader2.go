@@ -17,10 +17,10 @@ var (
 	errNoProgress = errors.New("lzma: Reader2 doesn't get data")
 )
 
-// Reader2 supports the reading of LZMA2 chunk sequences. Note that the
-// first chunk should have a dictionary reset and the first compressed
-// chunk a properties reset. A sequence that ends without an end-of-stream
-// chunk is reported as io.ErrUnexpectedEOF.
+// Reader2 supports the reading of LZMA2 chunk sequences. The first chunk
+// must reset the dictionary and the first compressed chunk the properties:
+// a sequence that does not is refused with ErrCorrupt. A sequence that ends
+// without an end-of-stream chunk is reported as io.ErrUnexpectedEOF.
 type Reader2 struct {
 	// r is in, the input behind a bound on the reads that give nothing:
 	// the chunks are read with io.ReadFull, which asks again for ever.
@@ -33,11 +33,10 @@ type Reader2 struct {
 	decoder     *decoder
 	chunkReader io.Reader
 
-	// reusable buffer and reader that hold one compressed chunk in memory
-	// so the range decoder reads bytes by index instead of paying a
-	// per-byte interface Read plus memmove through a streaming breader.
-	// newRangeDecoder recognizes the byteSliceReader and adopts the slice
-	// directly for its call-free read path.
+	// reusable buffer and reader that hold one compressed chunk in memory,
+	// so that the range decoder reads its bytes by index and not through
+	// an interface call for each: newRangeDecoder recognizes the
+	// byteSliceReader and takes the slice itself.
 	compBuf []byte
 	compRd  byteSliceReader
 
@@ -76,15 +75,12 @@ func (r *Reader2) DictSize() int { return r.dict.dictCap }
 
 // Reset prepares the reader to decode a fresh LZMA2 chunk sequence from z,
 // reusing the reader's allocations: the decoder with its probability models,
-// the dictionary buffer and the chunk buffer. The dictionary size stays what the
-// reader was created with. As with NewReader2, the first chunk
-// header is read immediately, and the chunk sequence must start with a
-// dictionary reset; an error is deferred to the first Read.
-//
-// The xz reader decodes every block of a file with a fresh chunk sequence,
-// so without Reset each block rebuilt the whole decoder — around 110
-// allocations per block, paid most dearly on the multi-block files the
-// parallel reader exists for.
+// the dictionary buffer and the chunk buffer. The dictionary size stays what
+// the reader was created with. What the previous sequence decoded and the
+// caller did not read is dropped, the error the reader held is forgotten,
+// and EOS reports false again. As with NewReader2, the first chunk header
+// is read immediately, the sequence must start with a dictionary reset, and
+// an error is deferred to the first Read.
 func (r *Reader2) Reset(z io.Reader) {
 	r.in = bytereader.Progress{R: z}
 	r.err = nil
@@ -217,11 +213,9 @@ func (r *Reader2) startChunk() error {
 		return nil
 	}
 	// Buffer the whole compressed chunk. The stored size field is the
-	// actual length minus one, so the chunk is header.compressed+1 bytes
-	// (matching the previous LimitReader bound). io.ReadFull advances r.r
-	// by exactly that many bytes, keeping the next chunk header aligned,
-	// and serving the range decoder from an in-memory bytes.Reader avoids
-	// the per-byte Read plus memmove that the streaming breader incurred.
+	// actual length minus one, so the chunk is header.compressed+1 bytes.
+	// io.ReadFull advances r.r by exactly that many, which leaves it at the
+	// next chunk header, and the range decoder reads the chunk from memory.
 	n := int(header.compressed) + 1
 	if cap(r.compBuf) < n {
 		r.compBuf = make([]byte, n)

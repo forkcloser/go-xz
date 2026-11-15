@@ -50,6 +50,8 @@ func (p Properties) String() string {
 }
 
 // PropertiesForCode converts a properties code byte into a Properties value.
+// A code above 224, the last the format defines, is refused with ErrCorrupt;
+// one whose lc and lp sum above four, 150 of the 225, with ErrUnsupported.
 func PropertiesForCode(code byte) (p Properties, err error) {
 	if code > maxPropertyCode {
 		return p, corruptf("lzma: invalid properties code")

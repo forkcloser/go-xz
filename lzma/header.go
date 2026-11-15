@@ -6,13 +6,6 @@ package lzma
 
 import (
 	"encoding/binary"
-	"errors"
-	"fmt"
-)
-
-// errHeaderDictSize is a dictionary size the classic LZMA header cannot carry.
-var (
-	errHeaderDictSize = errors.New("lzma: DictCap out of range")
 )
 
 // noHeaderSize defines the value of the length field in the LZMA header.
@@ -33,10 +26,6 @@ type Header struct {
 func (h *Header) marshalBinary() (data []byte, err error) {
 	if err = h.Properties.verify(); err != nil {
 		return nil, err
-	}
-
-	if !(h.DictSize <= MaxDictSize) {
-		return nil, fmt.Errorf("%w: %d", errHeaderDictSize, h.DictSize)
 	}
 
 	data = make([]byte, HeaderLen)

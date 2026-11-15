@@ -137,16 +137,10 @@ type probTree struct {
 	bits  byte
 }
 
-// Bits provides the number of bits for the values to de- or encode.
-func (t *probTree) Bits() int {
-	return int(t.bits)
-}
-
 // init sets the probability tree to its starting state for values of the
-// given bit size, keeping the existing backing array when it is big enough.
-// An LZMA2 chunk can reset the coder state, and a state reset re-initializes
-// every tree; allocating them afresh each time made a stream of small
-// resetting chunks cost far more in allocator traffic than in decoding.
+// given bit size, keeping the existing backing array when it is big enough:
+// an LZMA2 chunk can reset the coder state, a state reset re-initializes
+// every tree, and a stream of small resetting chunks allocates them once.
 func (t *probTree) init(bits int) {
 	if !(1 <= bits && bits <= 32) {
 		panic("bits outside of range [1,32]")
@@ -163,10 +157,9 @@ func (t *probTree) init(bits int) {
 }
 
 // deepcopy initializes the probTree value as a deep copy of the source,
-// keeping the existing backing array when it is big enough. The writer
-// snapshots its state once per LZMA2 chunk, and each snapshot copies every
-// tree; allocating them afresh each time made those snapshots the writer's
-// dominant source of allocations.
+// keeping the existing backing array when it is big enough: the writer
+// snapshots its state once per LZMA2 chunk, each snapshot copies every
+// tree, and the snapshots allocate them once.
 func (t *probTree) deepcopy(src *probTree) {
 	if t == src {
 		return

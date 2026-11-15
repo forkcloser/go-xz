@@ -34,12 +34,6 @@ func (b *buffer) Cap() int {
 	return len(b.data) - 1
 }
 
-// Resets the buffer. The front and rear index are set to zero.
-func (b *buffer) Reset() {
-	b.front = 0
-	b.rear = 0
-}
-
 // Buffered returns the number of bytes buffered.
 func (b *buffer) Buffered() int {
 	delta := b.front - b.rear
