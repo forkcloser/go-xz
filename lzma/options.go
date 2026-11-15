@@ -50,9 +50,10 @@ var (
 const defaultDictSize = 8 << 20
 
 // WithMaxDictSize bounds the dictionary a classic LZMA header may declare:
-// a header asking for more is refused with ErrUnsupported, so a mangled or
-// hostile header cannot drive the allocation. The default is 2 GiB-1.
-// NewReader.
+// a header asking for more is refused with ErrUnsupported. The dictionary is
+// grown on demand and costs what the stream decodes, so the default is no
+// bound below the format's 4 GiB-1; the option is for a reader of untrusted
+// input that wants a smaller one. NewReader.
 func WithMaxDictSize(n int64) Option {
 	return Option{"WithMaxDictSize", func(o *options) {
 		o.set |= optMaxDictSize
@@ -104,7 +105,7 @@ func WithEOSMarker() Option {
 // apply folds opts into the defaults, refusing any option outside allowed.
 func apply(opts []Option, allowed optionSet, constructor string) (options, error) {
 	o := options{
-		maxDictSize: 1<<31 - 1,
+		maxDictSize: MaxDictSize,
 		dictSize:    defaultDictSize,
 		// What xz uses.
 		props: Properties{LC: 3, LP: 0, PB: 2},

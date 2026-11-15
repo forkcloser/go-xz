@@ -22,23 +22,20 @@ import (
 //
 // # Security concerns
 //
-// Note that LZMA format doesn't support a magic marker in the header. So
-// [NewReader] cannot determine whether it reads the actual header. For instance
-// the LZMA stream might have a zero byte in front of the reader, leading to
-// larger dictionary sizes and file sizes. The code will detect later that there
-// are problems with the stream, but the dictionary has already been allocated
-// and this might consume a lot of memory.
-//
-// What bounds that:
-//   - WithMaxDictSize is a limit on the dictionary size a header may declare;
-//     a header asking for more is refused with ErrUnsupported. The default
-//     is 2 GiB-1.
+// The format has no magic marker, so NewReader cannot tell a header from
+// other bytes: a header that is not one, a file with a byte before its
+// header say, may declare any dictionary and any size. What bounds the cost
+// of that:
 //   - The dictionary is allocated as the data needs it, never the declared
 //     size up front, and no larger than the stream's own size when the
 //     header states one.
+//   - WithMaxDictSize is a limit on the dictionary size a header may declare;
+//     a header asking for more is refused with ErrUnsupported. The default
+//     is the format's 4 GiB-1.
 //   - Header reports what the header declared, so a caller can choose a
 //     limit for the files it meets.
-//   - Streams are supported up to a pebibyte (1024^5).
+//   - A header declaring a size above a pebibyte (1024^5) is refused with
+//     ErrUnsupported.
 //
 // # Input buffering
 //

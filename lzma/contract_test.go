@@ -838,11 +838,34 @@ func TestContractFlushedChunkIsRead(t *testing.T) {
 }
 
 // TestContractMaxDictSize: a classic header declaring a dictionary above
-// WithMaxDictSize is refused as unsupported; one at the limit is read.
+// WithMaxDictSize is refused as unsupported; one at the limit is read. "The
+// default is no bound below the format's 4 GiB-1": a header stating 2 GiB,
+// or the format's largest, opens with no option, and costs what its five
+// bytes of data do.
 func TestContractMaxDictSize(t *testing.T) {
 	t.Parallel()
 
 	stream := classic(t, wcase{opts: []lzma.Option{lzma.WithDictSize(1 << 20)}}, []byte("hello"))
+
+	for _, stated := range []uint32{1 << 31, 1<<32 - 1} {
+		large := bytes.Clone(stream)
+		binary.LittleEndian.PutUint32(large[1:], stated)
+
+		r, err := lzma.NewReader(bytes.NewReader(large))
+		if err != nil {
+			t.Fatalf("a header stating %d, no option: %v", stated, err)
+		}
+
+		if got, rerr := io.ReadAll(r); rerr != nil || string(got) != "hello" {
+			t.Errorf("a header stating %d: %q, %v", stated, got, rerr)
+		}
+
+		if _, err = lzma.NewReader(bytes.NewReader(large), lzma.WithMaxDictSize(int64(stated)-1)); !errors.Is(
+			err, lzma.ErrUnsupported,
+		) {
+			t.Errorf("a header stating %d under a limit one below: %v, want ErrUnsupported", stated, err)
+		}
+	}
 
 	_, err := lzma.NewReader(bytes.NewReader(stream), lzma.WithMaxDictSize(1<<16))
 	if !errors.Is(err, lzma.ErrUnsupported) {
