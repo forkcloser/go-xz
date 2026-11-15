@@ -7,9 +7,8 @@
 //
 // It is its own module so the library itself never depends on upstream: the
 // root go.mod stays free of it, and `go test ./...` from the root does not
-// descend here. Run it with `just test-upstreamdiff`, or
-//
-//	cd internal/upstreamdiff && go test ./...
+// descend here. Run it with `just test-upstreamdiff`: the recipe builds the
+// two modules as one workspace, so the test holds this tree to upstream.
 //
 // The contract it enforces is one-directional where the two disagree on
 // purpose. Anything either side compresses, the other must decompress to the
