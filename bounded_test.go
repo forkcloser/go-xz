@@ -456,8 +456,9 @@ func (o inOrder) Read(p []byte) (int, error) { return o.m.Read(p) }
 // empty, so a megabyte of padding and twenty thousand empty streams are
 // both valid files a few bytes describe. Read in order, either is at most
 // a Read call a kilobyte; with workers, what is fetched by offset is within
-// four times the file, and the fetches made to open it are at most one a
-// kilobyte and a few a stream.
+// four times the file, and the fetches made to open it, which read every
+// stream's header, index and footer, are at most one a kilobyte and a few a
+// stream.
 func TestBoundedReadCost(t *testing.T) {
 	t.Parallel()
 
@@ -512,7 +513,13 @@ func TestBoundedReadCost(t *testing.T) {
 			}
 
 			// Opening is where the streams and the padding between them
-			// are found; a stream of its own costs a few fetches.
+			// are found: every stream's header, index and footer is read
+			// by then, 32 bytes at the least, and a stream of its own
+			// costs a few fetches.
+			if least := int64(32 * tc.streams); m.fetched.Load() < least {
+				t.Errorf("%d bytes fetched to open %d streams, want at least %d", m.fetched.Load(), tc.streams, least)
+			}
+
 			if limit := int64(len(tc.file)/1024 + 64 + 8*tc.streams); m.fetches.Load() > limit {
 				t.Errorf(
 					"%d fetches to open a file of %d bytes, want at most %d",

@@ -28,7 +28,11 @@ func TestErrCorruptDistinguishesFromIO(t *testing.T) {
 	bad := hostileStream([]byte{0, 0, 0, 0},
 		[]hostileRecord{{unpaddedSize: 1, uncompressedSize: 1 << 60}}, -1)
 
-	_, err := NewReader(bytes.NewReader(bad), WithWorkers(4))
+	r, err := NewReader(bytes.NewReader(bad), WithWorkers(4))
+	if err == nil {
+		_, err = io.ReadAll(r)
+	}
+
 	if err == nil {
 		t.Fatal("hostile file accepted")
 	}
