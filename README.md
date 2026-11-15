@@ -17,6 +17,7 @@ on request (`WithFilters`).
 ```go
 r, err := xz.NewReader(f, xz.WithWorkers(0))            // all CPUs on a multi-block file
 w, err := xz.NewWriter(out, xz.WithBlockSize(1<<24), xz.WithCheck(xz.CheckSHA256))
+w, err = xz.NewWriter(out, xz.WithWorkers(0))            // all CPUs, in the blocks xz -T cuts
 ```
 
 ## Stability
@@ -127,6 +128,12 @@ the same benchmark bodies. Reproduce with:
 
 [`PERF.md`](./PERF.md) has the methodology, what each change bought, the
 negative results, and what is left.
+
+A writer with `WithWorkers` encodes blocks concurrently and writes the
+file a writer without workers writes at the same block size, byte for
+byte. On 10 MB of that corpus in blocks of 1 MiB, on 18 CPUs: 21 MB/s with
+no workers, 34 with two, 53 with four, 99 with all of them. Each block
+being encoded is held in memory with what it compresses to.
 
 Multi-block files (the shape `xz -T` produces, and the one `WithWorkers`
 exists for), same corpus:

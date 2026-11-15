@@ -28,6 +28,10 @@ type options struct {
 	maxDictSize  int64
 	singleStream bool
 	workers      int
+	// blocks: the writer cuts blocks and encodes them concurrently. Set by
+	// WithWorkers with any value but one, whatever number of workers that
+	// comes to: what a file holds cannot depend on the CPUs it was made on.
+	blocks bool
 	// writer
 	dictSize  int
 	props     lzma.Properties
@@ -52,7 +56,7 @@ const (
 
 const (
 	readerOptions = optMaxDictSize | optSingleStream | optWorkers
-	writerOptions = optDictSize | optProperties | optBlockSize | optCheck | optFilters
+	writerOptions = optWorkers | optDictSize | optProperties | optBlockSize | optCheck | optFilters
 )
 
 // What the constructors refuse of their options.
@@ -94,12 +98,25 @@ func WithSingleStream() Option {
 	}}
 }
 
-// WithWorkers sets how many blocks the reader decodes concurrently, 0 for
-// the number of CPUs (default 1, no concurrency). Blocks decode in parallel
-// when the input is a file or another io.ReaderAt that is also an
-// io.Seeker, through the file's indexes; a stream decodes in order on one
-// worker. A reader with workers must be closed when abandoned before
-// io.EOF. NewReader.
+// WithWorkers sets how many blocks are decoded or encoded concurrently, 0
+// for the number of CPUs (default 1, no concurrency).
+//
+// A reader decodes blocks in parallel when the input is a file or another
+// io.ReaderAt that is also an io.Seeker, through the file's indexes; a
+// stream decodes in order on one worker. A reader with workers must be
+// closed when abandoned before io.EOF.
+//
+// A writer given any value but one cuts the data into blocks of
+// WithBlockSize, or without it of three times the dictionary size and at
+// least 1 MiB, as xz -T does, and encodes that many at once. The file is
+// the one a writer without workers writes at that block size, byte for
+// byte, whatever the number of workers. Each block being encoded is held
+// in memory with what it compresses to, so a writer with n workers needs
+// about n times twice the block size, and its encoders; and an error from
+// the underlying writer is returned by the Write or Close that meets it,
+// which may be a later one than the Write whose data it lost.
+//
+// NewReader, NewWriter.
 func WithWorkers(n int) Option {
 	return Option{"WithWorkers", func(o *options) {
 		o.set |= optWorkers
@@ -128,8 +145,9 @@ func WithProperties(lc, lp, pb int) Option {
 }
 
 // WithBlockSize makes the writer close a block and start a new one every
-// n uncompressed bytes (default: one block). Multi-block files are what a
-// reader with workers decodes concurrently. NewWriter.
+// n uncompressed bytes (default: one block, or with WithWorkers what that
+// option says). Multi-block files are what a reader with workers decodes
+// concurrently. NewWriter.
 func WithBlockSize(n int64) Option {
 	return Option{"WithBlockSize", func(o *options) {
 		o.set |= optBlockSize
@@ -310,6 +328,8 @@ func apply(opts []Option, allowed optionSet, constructor string) (options, error
 	if err := outOfScope(opts, o.set&^allowed, constructor); err != nil {
 		return o, err
 	}
+
+	o.blocks = o.set&optWorkers != 0 && o.workers != 1
 
 	if o.set&optWorkers != 0 && o.workers == 0 {
 		o.workers = runtime.GOMAXPROCS(0)
