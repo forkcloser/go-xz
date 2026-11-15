@@ -21,6 +21,7 @@ package lzma_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -632,6 +633,34 @@ func TestContractMaxDictSize(t *testing.T) {
 
 	if got, err := io.ReadAll(r); err != nil || string(got) != "hello" {
 		t.Fatalf("%q, %v", got, err)
+	}
+}
+
+// TestContractDeclaredSize: ErrUnsupported is "a classic LZMA header
+// declaring a stream larger than the implementation supports", whatever the
+// size above a pebibyte, up to the largest the field holds short of "no
+// size"; a pebibyte itself is read.
+func TestContractDeclaredSize(t *testing.T) {
+	t.Parallel()
+
+	stream := classic(t, wcase{}, []byte("hello"))
+
+	declare := func(size uint64) []byte {
+		out := bytes.Clone(stream)
+		binary.LittleEndian.PutUint64(out[5:], size)
+
+		return out
+	}
+
+	if _, err := lzma.NewReader(bytes.NewReader(declare(1 << 50))); err != nil {
+		t.Errorf("a pebibyte: %v", err)
+	}
+
+	for _, size := range []uint64{1<<50 + 1, 1<<63 - 1, 1 << 63, 1<<64 - 2} {
+		_, err := lzma.NewReader(bytes.NewReader(declare(size)))
+		if !errors.Is(err, lzma.ErrUnsupported) || errors.Is(err, lzma.ErrCorrupt) {
+			t.Errorf("size %d: %v, want an error matching ErrUnsupported alone", size, err)
+		}
 	}
 }
 
