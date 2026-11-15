@@ -32,7 +32,8 @@ var (
 	ErrClosed = errors.New("xz: already closed")
 
 	// ErrUnsupported reports a stream this package cannot decode even though
-	// it may be well formed, such as a filter other than LZMA2.
+	// it may be well formed, such as a check or a filter the format reserves
+	// for later, or a dictionary above WithMaxDictSize.
 	ErrUnsupported = errors.New("xz: unsupported feature")
 )
 

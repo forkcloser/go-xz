@@ -46,8 +46,7 @@ const maxLZMA2Expansion = (2 << 20) / 6
 // possibly be produced by a block of the recorded unpadded size. The decode
 // buffer grows with the data actually produced rather than being sized from
 // this number, so the check is not what keeps allocations bounded; it rejects
-// the absurd records early, before any worker spends time on them, and keeps
-// Size (which sums these values) meaningful.
+// the absurd records early, before any worker spends time on them.
 func checkUncompressedSize(rec record) error {
 	if rec.uncompressedSize > math.MaxInt {
 		return corruptf(
@@ -82,8 +81,8 @@ func checkUncompressedSize(rec record) error {
 // xz with a block size limit or in multi-threaded mode, or by this
 // package's writer with WithBlockSize — decode with real
 // concurrency; a single-block file decodes on one worker. Memory in flight
-// is a bounded number of uncompressed blocks, about twice Workers plus a
-// few: the decoded queue, the block being read, and the buffer pool.
+// is a bounded number of uncompressed blocks, about twice the workers plus
+// a few: the decoded queue, the block being read, and the buffer pool.
 //
 // The parallelReader verifies the block checks, the block sizes against
 // the index, and the header, footer and index checksums of every
@@ -91,8 +90,8 @@ func checkUncompressedSize(rec record) error {
 //
 // Read and WriteTo must be called from one goroutine at a time. Close is the
 // exception: it may be called from another goroutine to cancel a Read that is
-// waiting on a block, which is what makes it usable for abandoning a reader
-// whose input has gone slow.
+// waiting on a block. It waits for the block each worker has in hand, so it
+// does not return before an input that has stopped answering.
 type parallelReader struct {
 	opts options
 
@@ -101,8 +100,7 @@ type parallelReader struct {
 	// that stops them when a reader is abandoned without Close can only run
 	// once the reader is unreachable, which it never becomes while a
 	// goroutine stack still roots it.
-	dec  *parallelDecoder
-	size int64
+	dec *parallelDecoder
 
 	// Owned by the reading goroutine.
 	cur    []byte
@@ -178,7 +176,6 @@ func newParallelReader(xz io.ReaderAt, size int64, o options) (r *parallelReader
 			blocks: l.blocks,
 			done:   make(chan struct{}),
 		},
-		size: l.total,
 	}
 	// Workers and the dispatcher are goroutines, and goroutines are not
 	// collected just because nothing references the reader that started them.
@@ -252,11 +249,10 @@ func readFullAt(xz io.ReaderAt, p []byte, off int64) error {
 // parseBlocks locates all blocks of the xz file by walking the streams
 // backwards from the end of the file: footer, index, stream header.
 // The header, footer and index checksums of every stream are verified.
-// layout is what parseBlocks finds: the blocks in file order, the total
-// uncompressed size, and how many streams the file holds.
+// layout is what parseBlocks finds: the blocks in file order, and how many
+// streams the file holds.
 type layout struct {
 	blocks  []blockDesc
-	total   int64
 	streams int
 }
 
@@ -307,10 +303,7 @@ func parseBlocks(xz io.ReaderAt, size int64) (l layout, err error) {
 		return layout{}, corruptf("xz: no streams found")
 	}
 
-	l.blocks, l.total, err = joinStreams(streams)
-	l.streams = len(streams)
-
-	return l, err
+	return layout{blocks: joinStreams(streams), streams: len(streams)}, nil
 }
 
 // parseStream reads the stream that ends at pos back to front: its footer,
@@ -461,27 +454,15 @@ func readStreamHeader(xz io.ReaderAt, headerPos int64, flags byte) (func() hash.
 	return newHashFunc(h.flags)
 }
 
-// joinStreams lays the streams, found back to front, out front to back, and
-// totals their uncompressed sizes.
-func joinStreams(streams [][]blockDesc) (blocks []blockDesc, total int64, err error) {
-	for _, stream := range slices.Backward(streams) {
-		for _, d := range stream {
-			// Each size is already bounded against its own block, but the
-			// total is what Size reports, and callers size buffers from it.
-			// Wrapping it would hand them a small or negative number for an
-			// enormous stream.
-			if d.uncompressedSize > math.MaxInt64-total {
-				return nil, 0, corruptf(
-					"xz: total uncompressed size overflows int64",
-				)
-			}
+// joinStreams lays the streams, found back to front, out front to back.
+func joinStreams(streams [][]blockDesc) []blockDesc {
+	var blocks []blockDesc
 
-			total += d.uncompressedSize
-			blocks = append(blocks, d)
-		}
+	for _, stream := range slices.Backward(streams) {
+		blocks = append(blocks, stream...)
 	}
 
-	return blocks, total, nil
+	return blocks
 }
 
 // indexEOF converts an EOF met while parsing the index into corruption: the

@@ -982,9 +982,8 @@ func TestContractOptionBounds(t *testing.T) {
 // handed out. A stream whose header says sixteen bytes and whose second
 // operation is a match that crosses them is ErrCorrupt, "sizes that disagree
 // with the data", and the bytes read before the error are at most sixteen
-// of the data: a match is written whole, and one that crosses the size was
-// written, and read, before the size was looked at. The same holds for an
-// LZMA2 chunk, whose header carries the size.
+// of the data. The same holds for an LZMA2 chunk, whose header carries the
+// size.
 func TestContractOutputWithinDeclaredSize(t *testing.T) {
 	t.Parallel()
 
@@ -1041,8 +1040,7 @@ func TestContractOutputWithinDeclaredSize(t *testing.T) {
 // TestContractFlushedChunkIsRead: Flush "writes all buffered data out to the
 // underlying stream", and a reader at the other end of it reads that data
 // without waiting for what the writer sends next: Read returns what is
-// there, as readers do. It used to go on to the next chunk's header until
-// its buffer was full, so an exchange over a flushed stream stood still.
+// there, as readers do.
 func TestContractFlushedChunkIsRead(t *testing.T) {
 	t.Parallel()
 

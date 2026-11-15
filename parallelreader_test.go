@@ -70,10 +70,6 @@ func testParallelRead(t *testing.T, xz, want []byte, workers int) {
 		t.Fatalf("newParallelReader error %s", err)
 	}
 
-	if r.size != int64(len(want)) {
-		t.Fatalf("size is %d; want %d", r.size, len(want))
-	}
-
 	got, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("ReadAll error %s", err)
