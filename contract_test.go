@@ -599,3 +599,61 @@ func TestContractLyingIndex(t *testing.T) {
 		}
 	}
 }
+
+// closingWriter closes the reader from another goroutine during its first
+// Write, waits for that Close to return, and goes on accepting.
+type closingWriter struct {
+	r      *xz.Reader
+	closed bool
+}
+
+func (w *closingWriter) Write(p []byte) (int, error) {
+	if !w.closed {
+		w.closed = true
+
+		done := make(chan struct{})
+
+		go func() {
+			_ = w.r.Close()
+
+			close(done)
+		}()
+
+		<-done
+	}
+
+	return len(p), nil
+}
+
+// TestContractCloseDuringWriteTo: a copy cut by a Close from another
+// goroutine is never reported as a whole one. With 300 blocks and four
+// workers the Close lands long before the end, so WriteTo and io.Copy
+// return an error matching ErrClosed, every time: each used to return nil
+// about one time in four, with what it had written so far.
+func TestContractCloseDuringWriteTo(t *testing.T) {
+	t.Parallel()
+
+	data := cData(300 * 2000)
+	file := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data, 2000))
+
+	for name, cp := range map[string]func(w io.Writer, r *xz.Reader) (int64, error){
+		"WriteTo": func(w io.Writer, r *xz.Reader) (int64, error) { return r.WriteTo(w) },
+		"io.Copy": func(w io.Writer, r *xz.Reader) (int64, error) { return io.Copy(w, r) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			for trial := range 100 {
+				r, err := xz.NewReader(bytes.NewReader(file), xz.WithWorkers(4))
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				n, err := cp(&closingWriter{r: r}, r)
+				if !errors.Is(err, xz.ErrClosed) {
+					t.Fatalf("trial %d: %d of %d bytes copied, %v", trial, n, len(data), err)
+				}
+			}
+		})
+	}
+}
