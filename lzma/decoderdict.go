@@ -70,10 +70,21 @@ func newDecoderDictSize(dictCap, initial int) (d *decoderDict, err error) {
 // maxInt is the largest value of the int type.
 const maxInt = int(^uint(0) >> 1)
 
-// Reset clears the dictionary. The read buffer is not changed, so the
-// buffered data can still be read.
+// Reset clears the dictionary. What is buffered can still be read.
+//
+// A buffer that has not reached dictCap has never wrapped, and grows when a
+// write would pass its end: left where it was, the next dictionary would
+// write on from the last one's end, and a file of small blocks grew the
+// buffer to dictCap block after block, each needing a fraction of it. So
+// what is unread moves to the start, and the next dictionary has the whole
+// of what the buffer already holds before it grows.
 func (d *decoderDict) Reset() {
 	d.head = 0
+
+	if d.growAt != maxInt {
+		n := copy(d.buf.data, d.buf.data[d.buf.rear:d.buf.front])
+		d.buf.rear, d.buf.front = 0, n
+	}
 }
 
 // WriteByte writes a single byte into the dictionary. It is used to

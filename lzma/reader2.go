@@ -83,11 +83,12 @@ func (r *Reader2) Reset(z io.Reader) {
 	r.r = z
 	r.err = nil
 	r.cstate = start
-	r.dict.Reset()
 	// What the previous sequence decoded and the caller never read is not
 	// the new sequence's: the in-stream dictionary resets keep it readable,
-	// this one drops it.
+	// this one drops it. Dropped first, so that the reset has nothing to
+	// move.
 	_, _ = r.dict.buf.Discard(r.dict.buf.Buffered())
+	r.dict.Reset()
 
 	if err := r.startChunk(); err != nil {
 		r.err = err

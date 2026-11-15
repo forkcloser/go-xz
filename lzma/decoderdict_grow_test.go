@@ -6,7 +6,9 @@ package lzma //nolint:testpackage // white-box: tests the unexported dictionary'
 
 import (
 	"bytes"
+	"errors"
 	"math/rand/v2"
+	"slices"
 	"testing"
 )
 
@@ -175,8 +177,8 @@ func testGrowMatchesEager(t *testing.T, dictCap, initial int) {
 }
 
 // TestDecoderDictGrowWithReset covers the dictionary reset that an LZMA2
-// cLRND chunk performs: it zeroes head while the buffer keeps its write
-// position, so growth has to stay correct across it.
+// cLRND chunk performs: it zeroes head and keeps what is unread, so growth
+// has to stay correct across it.
 func TestDecoderDictGrowWithReset(t *testing.T) {
 	t.Parallel()
 
@@ -293,5 +295,109 @@ func TestDecoderDictGrowReachesDeclaredCap(t *testing.T) {
 	// The furthest legal distance must still resolve to the right byte.
 	if got, want := d.byteAt(dictCap), byte(0); got != want {
 		t.Fatalf("byteAt(%d) is %d; want %d", dictCap, got, want)
+	}
+}
+
+// TestDecoderDictResetReusesTheBuffer: a dictionary reset starts the next
+// dictionary where the buffer starts. Forty dictionaries of 100 KiB each,
+// read whole, under a capacity of 16 MiB, leave the buffer the size one of
+// them needs, where each used to be written after the last and the buffer
+// grew with their sum.
+func TestDecoderDictResetReusesTheBuffer(t *testing.T) {
+	t.Parallel()
+
+	const (
+		dictCap = 16 << 20
+		chunk   = 100 << 10
+	)
+
+	d, err := newDecoderDict(dictCap)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, chunk)
+	for i := range data {
+		data[i] = byte(i ^ i>>8)
+	}
+
+	got := make([]byte, chunk)
+
+	for round := range 40 {
+		if n, werr := d.Write(data); werr != nil || n != chunk {
+			t.Fatalf("round %d: Write: %d, %v", round, n, werr)
+		}
+
+		if n, _ := d.Read(got); n != chunk || !bytes.Equal(got, data) {
+			t.Fatalf("round %d: read %d bytes back, not the %d written", round, n, chunk)
+		}
+
+		d.Reset()
+	}
+
+	// Doubling from 64 KiB: 128 KiB holds 100.
+	if c := d.buf.Cap(); c > 2*chunk {
+		t.Errorf("after 40 dictionaries of %d bytes the buffer holds %d", chunk, c)
+	}
+}
+
+// TestDecoderDictResetKeepsWhatIsUnread: "What is buffered can still be
+// read". A reset with 40 KiB of the last dictionary unread delivers them,
+// then the next dictionary's bytes, in order; a match of the new dictionary
+// cannot reach back into the old one; and the buffer holds the two, not
+// more.
+func TestDecoderDictResetKeepsWhatIsUnread(t *testing.T) {
+	t.Parallel()
+
+	const chunk = 100 << 10
+
+	d, err := newDecoderDict(16 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, second := make([]byte, chunk), make([]byte, chunk)
+	for i := range first {
+		first[i], second[i] = byte(i^i>>8), byte(i*7^i>>5)
+	}
+
+	if _, werr := d.Write(first); werr != nil {
+		t.Fatal(werr)
+	}
+
+	head := make([]byte, 60<<10)
+	if n, _ := d.Read(head); n != len(head) || !bytes.Equal(head, first[:len(head)]) {
+		t.Fatalf("read %d bytes of the first dictionary, not its first %d", n, len(head))
+	}
+
+	d.Reset()
+
+	if merr := d.writeMatch(1, 4); !errors.Is(merr, ErrCorrupt) {
+		t.Errorf("a match reaching before the reset: %v, want ErrCorrupt", merr)
+	}
+
+	if _, werr := d.Write(second); werr != nil {
+		t.Fatal(werr)
+	}
+
+	// A match within the new dictionary copies its own bytes.
+	if merr := d.writeMatch(int64(chunk), 8); merr != nil {
+		t.Fatalf("a match within the new dictionary: %v", merr)
+	}
+
+	want := slices.Concat(first[len(head):], second, second[:8])
+
+	rest := make([]byte, len(want)+1)
+	if n, _ := d.Read(rest); n != len(want) || !bytes.Equal(rest[:n], want) {
+		t.Errorf(
+			"read %d bytes after the reset; want the %d unread of the first dictionary and the second",
+			n,
+			len(want),
+		)
+	}
+
+	// 40 KiB carried over and 100 KiB after them: 256 KiB at the next doubling.
+	if c := d.buf.Cap(); c > 256<<10 {
+		t.Errorf("the buffer holds %d bytes for 140 KiB", c)
 	}
 }
