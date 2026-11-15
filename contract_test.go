@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"math"
@@ -1045,6 +1046,100 @@ func lyingIndex(file []byte, record, field, delta int) []byte {
 	binary.LittleEndian.PutUint32(index[len(index)-4:], crc32.ChecksumIEEE(index[:len(index)-4]))
 
 	return out
+}
+
+// failing serves n bytes of a file, then fails with err.
+type failing struct {
+	file []byte
+	n    int
+	err  error
+}
+
+func (f *failing) Read(p []byte) (int, error) {
+	if f.n == 0 {
+		return 0, f.err
+	}
+
+	k := copy(p[:min(len(p), f.n)], f.file)
+	f.file, f.n = f.file[k:], f.n-k
+
+	return k, nil
+}
+
+// TestContractSourceErrors: an error of the source "is returned as it is"
+// and matches no sentinel, "except that input ending inside a stream, with
+// io.EOF or an error wrapping it, is io.ErrUnexpectedEOF".
+func TestContractSourceErrors(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, data, 1000))
+	errSource := errors.New("source failed")
+
+	for name, tc := range map[string]struct {
+		cause, want error
+		asItIs      bool
+	}{
+		"an error":        {errSource, errSource, true},
+		"a wrapped error": {fmt.Errorf("read: %w", errSource), errSource, true},
+		"io.EOF":          {io.EOF, io.ErrUnexpectedEOF, false},
+		"wrapping io.EOF": {fmt.Errorf("gone: %w", io.EOF), io.ErrUnexpectedEOF, false},
+	} {
+		r, err := xz.NewReader(&failing{file: file, n: len(file) / 2, err: tc.cause})
+		if err != nil {
+			t.Fatalf("%s: opening: %v", name, err)
+		}
+
+		_, err = io.ReadAll(r)
+		if !errors.Is(err, tc.want) || (tc.asItIs && !errors.Is(err, tc.cause)) {
+			t.Errorf("%s: %v, want %v", name, err, tc.want)
+		}
+
+		for _, sentinel := range []error{xz.ErrCorrupt, xz.ErrUnsupported, xz.ErrClosed} {
+			if errors.Is(err, sentinel) {
+				t.Errorf("%s: %v matches %v", name, err, sentinel)
+			}
+		}
+	}
+}
+
+// TestContractDictSizeStated: "every block header states the size, rounded
+// up to the next one the format has a code for: a power of two, or one and
+// a half times one". The code is the fifth byte of a block header whose
+// chain is LZMA2 alone, after the twelve of the stream header.
+func TestContractDictSizeStated(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		size int
+		code byte
+	}{
+		{"4 MiB is a power of two", 4 << 20, 20},
+		{"a byte above 4 MiB is 6 MiB", 4<<20 + 1, 21},
+		{"5 MiB is 6 MiB", 5 << 20, 21},
+		{"6 MiB is one and a half times 4 MiB", 6 << 20, 21},
+		{"a byte above 6 MiB is 8 MiB", 6<<20 + 1, 22},
+	} {
+		var out bytes.Buffer
+
+		w, err := xz.NewWriter(&out, xz.WithDictSize(tc.size))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		if _, err = w.Write([]byte("x")); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		if err = w.Close(); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		if got := out.Bytes()[12+4]; got != tc.code {
+			t.Errorf("%s: the block header states code %d, want %d", tc.name, got, tc.code)
+		}
+	}
 }
 
 // holed is a file that is whole until armed, and then serves nothing of

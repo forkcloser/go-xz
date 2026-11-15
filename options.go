@@ -110,7 +110,7 @@ func WithSingleStream() Option {
 }
 
 // WithWorkers sets how many blocks are decoded or encoded concurrently, 0
-// for the number of CPUs (default 1, no concurrency).
+// for GOMAXPROCS (default 1, no concurrency).
 //
 // A reader decodes blocks in parallel when the input is a file or another
 // io.ReaderAt that is also an io.Seeker, through the file's indexes; a
@@ -139,8 +139,9 @@ func WithWorkers(n int) Option {
 
 // WithDictSize sets the encoder's dictionary size, lzma.MinDictSize to
 // lzma.MaxDictSize (default 8 MiB). A larger dictionary finds longer
-// matches at the cost of memory on both sides; the size is recorded in
-// every block header. NewWriter.
+// matches at the cost of memory on both sides. Every block header states
+// the size, rounded up to the next one the format has a code for: a power
+// of two, or one and a half times one. NewWriter.
 func WithDictSize(n int) Option {
 	return Option{"WithDictSize", func(o *options) {
 		o.set |= optDictSize

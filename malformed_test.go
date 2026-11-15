@@ -317,6 +317,9 @@ func TestOptionValidation(t *testing.T) {
 		"bcj distance":       WithFilters(Filter{ID: X86, Distance: 1}),
 		"bcj misaligned":     WithFilters(Filter{ID: ARM, StartOffset: 2}),
 		"reader option":      WithSingleStream(),
+		"lc out of range":    WithProperties(9, 0, 0),
+		"lc+lp above four":   WithProperties(3, 2, 0),
+		"negative workers":   WithWorkers(-1),
 	}
 	// A dictionary size above lzma.MaxDictSize (1<<32 - 1) is representable
 	// only where int is 64 bits wide. On a 32-bit platform every positive int
@@ -332,8 +335,17 @@ func TestOptionValidation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := NewWriter(io.Discard, opt); err == nil {
+			_, err := NewWriter(io.Discard, opt)
+			if err == nil {
 				t.Errorf("NewWriter accepted %s", name)
+			}
+
+			// A refused option is the caller's mistake, not a verdict on
+			// any input: it matches none of the sentinels.
+			for _, sentinel := range []error{ErrCorrupt, ErrUnsupported, ErrClosed} {
+				if errors.Is(err, sentinel) {
+					t.Errorf("%s: %v matches %v", name, err, sentinel)
+				}
 			}
 		})
 	}
@@ -351,8 +363,15 @@ func TestOptionValidation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := NewReader(bytes.NewReader(nil), tc.opt); !errors.Is(err, tc.want) {
+			_, err := NewReader(bytes.NewReader(nil), tc.opt)
+			if !errors.Is(err, tc.want) {
 				t.Errorf("NewReader with %s: %v, want %v", name, err, tc.want)
+			}
+
+			for _, sentinel := range []error{ErrCorrupt, ErrUnsupported, ErrClosed} {
+				if errors.Is(err, sentinel) {
+					t.Errorf("%s: %v matches %v", name, err, sentinel)
+				}
 			}
 		})
 	}

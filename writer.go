@@ -73,6 +73,8 @@ func nopWriteCloser(w io.Writer) io.WriteCloser {
 // return it from then on and write nothing further. The block in progress
 // may have been partly written when it happened, so the stream cannot be
 // completed; a caller that wants the data has to start over.
+//
+// A Writer is for one goroutine at a time, with workers too.
 type Writer struct {
 	opts options
 
@@ -107,8 +109,8 @@ func NewWriter(xz io.Writer, opts ...Option) (w *Writer, err error) {
 		}
 	}
 
-	// The chain is built once here so a wrong filter is the constructor's
-	// error, not the first block's.
+	// The chain is built here first, so that a wrong filter is the
+	// constructor's error, not the first block's.
 	if _, err = o.chain(); err != nil {
 		return nil, err
 	}
@@ -284,7 +286,7 @@ func (w *Writer) closeBlockWriter() error {
 	return nil
 }
 
-// newBlockWriter creates a new block writer writes the header out.
+// newBlockWriter creates a block writer and writes its header.
 func (w *Writer) newBlockWriter() error {
 	var err error
 
@@ -314,7 +316,7 @@ func (cw *countingWriter) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// blockWriter is writes a single block.
+// blockWriter writes a single block.
 type blockWriter struct {
 	cxz countingWriter
 	// mw combines io.WriteCloser w and the hash.
@@ -381,7 +383,8 @@ func (bw *blockWriter) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// Close closes the writer.
+// Close ends the block: the filters' last bytes, the padding and the check.
+// The Writer closes a block once and lets go of it.
 func (bw *blockWriter) Close() error {
 	if err := bw.w.Close(); err != nil {
 		return err
@@ -405,8 +408,8 @@ func (bw *blockWriter) record() record {
 	return record{bw.unpaddedSize(), bw.uncompressedSize()}
 }
 
-// unpaddedSize returns the sum of the header length, the uncompressed
-// size of the block and the hash size.
+// unpaddedSize returns the sum of the header length, the compressed size
+// of the block and the check's size.
 func (bw *blockWriter) unpaddedSize() int64 {
 	if bw.headerLen <= 0 {
 		panic("xz: block header not written")
@@ -419,14 +422,14 @@ func (bw *blockWriter) unpaddedSize() int64 {
 	return n
 }
 
-// uncompressedSize returns the number of data written to the
+// uncompressedSize returns the number of bytes written to the
 // blockWriter.
 func (bw *blockWriter) uncompressedSize() int64 {
 	return bw.n
 }
 
-// compressed size returns the amount of data written to the underlying
-// stream.
+// compressedSize returns the number of bytes the block's data came to in
+// the underlying stream.
 func (bw *blockWriter) compressedSize() int64 {
 	return bw.cxz.n
 }
