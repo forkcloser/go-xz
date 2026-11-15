@@ -311,12 +311,10 @@ func TestParallelReaderHostileSizeRealBlock(t *testing.T) {
 
 	genuine := out.Bytes() // single block
 
-	l, err := parseBlocks(bytes.NewReader(genuine), int64(len(genuine)))
+	blocks, err := parseBlocks(bytes.NewReader(genuine), int64(len(genuine)))
 	if err != nil {
 		t.Fatalf("parseBlocks error %s", err)
 	}
-
-	blocks := l.blocks
 
 	if len(blocks) != 1 {
 		t.Fatalf("got %d blocks; want 1", len(blocks))
@@ -363,7 +361,12 @@ func TestParallelReaderHostileRecordCountIsBoundedEarly(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 
-	_, err := NewReader(bytes.NewReader(file), WithWorkers(4))
+	// The file does not read from its end, so it is then read in order,
+	// which refuses it in its turn: both refusals are within the budget.
+	r, err := NewReader(bytes.NewReader(file), WithWorkers(4))
+	if err == nil {
+		_, err = io.ReadAll(r)
+	}
 
 	runtime.ReadMemStats(&after)
 

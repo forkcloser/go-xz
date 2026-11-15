@@ -99,8 +99,8 @@ func WithMaxDictSize(n int64) Option {
 
 // WithSingleStream makes the reader stop after the first xz stream instead
 // of continuing through stream padding into further concatenated streams.
-// Any byte after the stream is then reported as corruption, which is what
-// the reference tool does with --single-stream. NewReader.
+// Any byte after the stream, padding included, is then reported as
+// corruption, where xz --single-stream leaves it unread. NewReader.
 func WithSingleStream() Option {
 	return Option{"WithSingleStream", func(o *options) {
 		o.set |= optSingleStream
@@ -113,8 +113,11 @@ func WithSingleStream() Option {
 //
 // A reader decodes blocks in parallel when the input is a file or another
 // io.ReaderAt that is also an io.Seeker, through the file's indexes; a
-// stream decodes in order on one worker. A reader with workers must be
-// closed when abandoned before io.EOF.
+// stream decodes in order on one worker, as does a single-stream reader, a
+// file with fewer than two blocks, and a file whose indexes do not read,
+// which is then refused as it is without workers. A reader with workers
+// holds whole decoded blocks, about twice the workers plus a few of them,
+// and must be closed when abandoned before io.EOF.
 //
 // A writer given any value but one cuts the data into blocks of
 // WithBlockSize, or without it of three times the dictionary size and at

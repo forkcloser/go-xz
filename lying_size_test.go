@@ -6,7 +6,6 @@ package xz_test
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"testing"
 
@@ -14,11 +13,10 @@ import (
 )
 
 // TestParallelReaderSizeThatLies: a size larger than the bytes the
-// io.ReaderAt serves is a file cut short, io.ErrUnexpectedEOF, not the
-// reader's end of file, whether the lie is one group of four or a megabyte:
-// a caller that measured its input wrong must hear truncation, as it would
-// from a file that is. (A size that is not a multiple of four is refused as
-// corrupt before any read, as the format demands of every file.)
+// io.ReaderAt serves makes the file unreadable from its end, so it is read
+// in order, as it is without workers: whole, the stream being all there,
+// whether the lie is one group of four or a megabyte. (A source that stops
+// serving part of a block it had is cut short: TestContractSourceServesLess.)
 func TestParallelReaderSizeThatLies(t *testing.T) {
 	t.Parallel()
 
@@ -26,17 +24,18 @@ func TestParallelReaderSizeThatLies(t *testing.T) {
 	file := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data, 1000))
 
 	for _, extra := range []int64{4, 12, 4096, 1 << 20} {
-		pr, err := xz.NewReader(
-			io.NewSectionReader(bytes.NewReader(file), 0, int64(len(file))+extra),
-			xz.WithWorkers(4),
-		)
-		if err == nil {
-			_, err = io.ReadAll(pr)
-			_ = pr.Close()
-		}
+		for name, opts := range map[string][]xz.Option{"workers": {xz.WithWorkers(4)}, "no workers": nil} {
+			r, err := xz.NewReader(io.NewSectionReader(bytes.NewReader(file), 0, int64(len(file))+extra), opts...)
+			if err != nil {
+				t.Fatalf("size overstated by %d, %s: %v", extra, name, err)
+			}
 
-		if !errors.Is(err, io.ErrUnexpectedEOF) {
-			t.Fatalf("size overstated by %d: %v; want io.ErrUnexpectedEOF", extra, err)
+			got, err := io.ReadAll(r)
+			_ = r.Close()
+
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("size overstated by %d, %s: %d bytes, %v", extra, name, len(got), err)
+			}
 		}
 	}
 }

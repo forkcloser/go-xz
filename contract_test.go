@@ -33,6 +33,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1003,6 +1004,131 @@ func TestContractSeekFailure(t *testing.T) {
 	//nolint:errorlint // the same error, untouched
 	if _, err := xz.NewReader(&seeker{Reader: bytes.NewReader(file), failAt: 3}, xz.WithWorkers(2)); err != errSeek {
 		t.Errorf("the Seek that puts the position back fails: %v, want the input's error", err)
+	}
+}
+
+// class is what a caller can tell of an error: nothing, one of the three
+// kinds a file is refused as, or something else.
+func class(err error) string {
+	switch {
+	case err == nil:
+		return "read"
+	case errors.Is(err, xz.ErrCorrupt):
+		return "corrupt"
+	case errors.Is(err, xz.ErrUnsupported):
+		return "unsupported"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return "cut short"
+	}
+
+	return err.Error()
+}
+
+// TestContractWorkersChangeNoVerdict: "workers change how fast a file is
+// read and what it costs in memory, not the data, nor what a file is
+// refused as". A file of three blocks cut after each of its bytes, with
+// each of its bytes flipped, and with bytes or padding after it, is refused
+// as the same kind of thing with workers and without, or read to the same
+// data; and so is a file read with WithSingleStream. The one difference is
+// the documented one: a flipped size that makes a block claim more than the
+// file holds is a file cut short to a reader in order, which cannot know
+// where the file ends, and corrupt to one that does.
+func TestContractWorkersChangeNoVerdict(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+	file := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data, 1000))
+
+	files := map[string][]byte{
+		"whole":                 file,
+		"a byte after":          append(bytes.Clone(file), 1),
+		"three bytes after":     append(bytes.Clone(file), 1, 2, 3),
+		"four bytes after":      append(bytes.Clone(file), 1, 2, 3, 4),
+		"padding after":         append(bytes.Clone(file), 0, 0, 0, 0),
+		"padding not of four":   append(bytes.Clone(file), 0, 0),
+		"twice":                 append(bytes.Clone(file), file...),
+		"twice, the second cut": append(bytes.Clone(file), file[:len(file)/2]...),
+	}
+
+	for cut := range file {
+		files["cut after "+strconv.Itoa(cut)+" bytes"] = file[:cut]
+
+		flipped := bytes.Clone(file)
+		flipped[cut] ^= 0x20
+		files["byte "+strconv.Itoa(cut)+" flipped"] = flipped
+	}
+
+	for _, single := range []bool{false, true} {
+		var opts []xz.Option
+		if single {
+			opts = append(opts, xz.WithSingleStream())
+		}
+
+		for name, f := range files {
+			read := func(more ...xz.Option) verdict {
+				r, err := xz.NewReader(bytes.NewReader(f), append(more, opts...)...)
+				if err != nil {
+					return verdict{err: err}
+				}
+
+				defer func() { _ = r.Close() }()
+
+				out, err := io.ReadAll(r)
+
+				return verdict{data: out, err: err}
+			}
+
+			without, with := read(), read(xz.WithWorkers(4))
+
+			a, b := class(without.err), class(with.err)
+			beyond := strings.HasSuffix(name, " flipped") && a == "cut short" && b == "corrupt"
+
+			if a != b && !beyond {
+				t.Errorf("%s, single stream %v: %s without workers, %s with", name, single, a, b)
+			}
+
+			if without.err == nil && !bytes.Equal(without.data, with.data) {
+				t.Errorf("%s, single stream %v: the data differ", name, single)
+			}
+		}
+	}
+
+	// Which reader read a file shows in that one difference. A file of one
+	// block has nothing to decode at once and is read in order, where the
+	// difference cannot arise; a file of two is read by offset, where it
+	// does.
+	for blocks, byOffset := range map[int]bool{1: false, 2: true} {
+		f := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data[:blocks*1000], 1000))
+		differs := false
+
+		for i := range f {
+			flipped := bytes.Clone(f)
+			flipped[i] ^= 0x20
+
+			verdicts := [2]string{}
+
+			for j, opts := range [][]xz.Option{nil, {xz.WithWorkers(4)}} {
+				r, err := xz.NewReader(bytes.NewReader(flipped), opts...)
+				if err == nil {
+					_, err = io.Copy(io.Discard, r)
+					_ = r.Close()
+				}
+
+				verdicts[j] = class(err)
+			}
+
+			switch {
+			case verdicts[0] == verdicts[1]:
+			case verdicts[0] == "cut short" && verdicts[1] == "corrupt":
+				differs = true
+			default:
+				t.Errorf("%d blocks, byte %d flipped: %s without workers, %s with", blocks, i, verdicts[0], verdicts[1])
+			}
+		}
+
+		if differs != byOffset {
+			t.Errorf("%d blocks: read by offset %v, want %v", blocks, differs, byOffset)
+		}
 	}
 }
 

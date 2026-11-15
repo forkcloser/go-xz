@@ -37,8 +37,15 @@ import (
 // With WithWorkers above one, blocks decode concurrently when the input is
 // an io.ReaderAt whose start and size the reader can learn (an io.Seeker,
 // as a file or a bytes.Reader is), through the file's indexes; a stream
-// decodes in order. A reader with workers must be closed when abandoned
-// before io.EOF. The decoded stream is presented in order through Read and
+// decodes in order, and so does a file with fewer than two blocks or one
+// whose indexes do not read. Workers change how fast a file is read and
+// what it costs in memory, not the data, nor what a file is refused as,
+// with one difference: a damaged size that makes a block claim more than
+// the file holds is corrupt to a reader that knows where the file ends, and
+// a file cut short to one that reads in order. A reader with workers holds
+// whole decoded blocks, about twice the workers plus a few of them,
+// whatever WithMaxDictSize says. It must be closed when abandoned before
+// io.EOF. The decoded stream is presented in order through Read and
 // WriteTo.
 type Reader struct {
 	opts options
@@ -74,8 +81,9 @@ type streamReader struct {
 }
 
 // NewReader creates a reader for the xz file read from xz, reading and
-// checking the first stream header. Options: WithMaxDictSize,
-// WithSingleStream, WithWorkers.
+// checking the first stream header. With workers, and a file that reads
+// from its end, it has read every stream's footer, index and header when
+// it returns. Options: WithMaxDictSize, WithSingleStream, WithWorkers.
 func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 	o, err := apply(opts, readerOptions, "NewReader")
 	if err != nil {
@@ -84,7 +92,12 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 
 	r = &Reader{opts: o, xz: xz}
 
-	if o.workers > 1 {
+	// Workers change how fast a file is read, never what reading it says.
+	// The blocks are found from the end of the file: a file that does not
+	// read from there is read in order, which says what is wrong with it as
+	// it does without workers; so is a file with no two blocks to decode at
+	// once, and so is the one stream of a single-stream reader.
+	if o.workers > 1 && !o.singleStream {
 		var section *io.SectionReader
 
 		if section, err = randomAccess(xz); err != nil {
@@ -92,12 +105,12 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 		}
 
 		if section != nil {
-			r.par, err = newParallelReader(section, section.Size(), o)
-			if err != nil {
-				return nil, err
-			}
+			par, perr := newParallelReader(section, section.Size(), o)
+			if perr == nil && len(par.dec.blocks) > 1 {
+				r.par = par
 
-			return r, nil
+				return r, nil
+			}
 		}
 	}
 

@@ -510,12 +510,10 @@ func TestBlockHeaderRunningPastBlockIsCorrupt(t *testing.T) {
 	data := bytes.Repeat([]byte("a"), 180000)
 	full := compressMultiBlock(t, data, 60000)
 
-	l, err := parseBlocks(bytes.NewReader(full), int64(len(full)))
+	blocks, err := parseBlocks(bytes.NewReader(full), int64(len(full)))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	blocks := l.blocks
 
 	if len(blocks) == 0 {
 		t.Fatal("the fixture has no blocks")

@@ -159,13 +159,9 @@ type blockWork struct {
 // in xz concurrently. It reads and verifies the stream headers, footers and
 // indexes, but does not decode any block data yet.
 func newParallelReader(xz io.ReaderAt, size int64, o options) (r *parallelReader, err error) {
-	l, err := parseBlocks(xz, size)
+	blocks, err := parseBlocks(xz, size)
 	if err != nil {
 		return nil, err
-	}
-
-	if o.singleStream && l.streams > 1 {
-		return nil, errUnexpectedData
 	}
 
 	r = &parallelReader{
@@ -173,7 +169,7 @@ func newParallelReader(xz io.ReaderAt, size int64, o options) (r *parallelReader
 		dec: &parallelDecoder{
 			opts:   o,
 			xz:     xz,
-			blocks: l.blocks,
+			blocks: blocks,
 			done:   make(chan struct{}),
 		},
 	}
@@ -249,32 +245,26 @@ func readFullAt(xz io.ReaderAt, p []byte, off int64) error {
 // parseBlocks locates all blocks of the xz file by walking the streams
 // backwards from the end of the file: footer, index, stream header.
 // The header, footer and index checksums of every stream are verified.
-// layout is what parseBlocks finds: the blocks in file order, and how many
-// streams the file holds.
-type layout struct {
-	blocks  []blockDesc
-	streams int
-}
-
-func parseBlocks(xz io.ReaderAt, size int64) (l layout, err error) {
+// It returns the blocks in file order.
+func parseBlocks(xz io.ReaderAt, size int64) (blocks []blockDesc, err error) {
 	streams := make([][]blockDesc, 0, 1)
 	scan := make([]byte, paddingScanBufSize)
 
 	pos := size
 	for pos > 0 {
 		if pos%4 != 0 {
-			return layout{}, corruptf("xz: file size not a multiple of four bytes")
+			return nil, corruptf("xz: file size not a multiple of four bytes")
 		}
 
 		if pos, err = skipStreamPadding(xz, pos, scan); err != nil {
-			return layout{}, err
+			return nil, err
 		}
 
 		if pos == 0 {
 			if len(streams) > 0 {
 				// Padding is between streams or after the last; at the
 				// start of the file it stands where a stream must be.
-				return layout{}, corruptf("xz: stream padding before the first stream")
+				return nil, corruptf("xz: stream padding before the first stream")
 			}
 
 			break
@@ -285,7 +275,7 @@ func parseBlocks(xz io.ReaderAt, size int64) (l layout, err error) {
 			headerPos int64
 		)
 		if descs, headerPos, err = parseStream(xz, pos); err != nil {
-			return layout{}, err
+			return nil, err
 		}
 
 		streams = append(streams, descs)
@@ -293,17 +283,17 @@ func parseBlocks(xz io.ReaderAt, size int64) (l layout, err error) {
 		// terminate. That follows from the bounds in parseStream, but state it
 		// here so termination is checkable locally and survives future edits.
 		if headerPos >= pos {
-			return layout{}, corruptf("xz: stream does not precede its index")
+			return nil, corruptf("xz: stream does not precede its index")
 		}
 
 		pos = headerPos
 	}
 
 	if len(streams) == 0 {
-		return layout{}, corruptf("xz: no streams found")
+		return nil, corruptf("xz: no streams found")
 	}
 
-	return layout{blocks: joinStreams(streams), streams: len(streams)}, nil
+	return joinStreams(streams), nil
 }
 
 // parseStream reads the stream that ends at pos back to front: its footer,
