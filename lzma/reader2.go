@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/forkcloser/xz/v2/internal/bytereader"
 )
 
 // errNoProgress is a decoder that returned neither data nor an error.
@@ -20,7 +22,10 @@ var (
 // chunk a properties reset. A sequence that ends without an end-of-stream
 // chunk is reported as io.ErrUnexpectedEOF.
 type Reader2 struct {
+	// r is in, the input behind a bound on the reads that give nothing:
+	// the chunks are read with io.ReadFull, which asks again for ever.
 	r   io.Reader
+	in  bytereader.Progress
 	err error
 
 	dict        *decoderDict
@@ -51,7 +56,8 @@ func NewReader2(lzma2 io.Reader, dictSize int) (r *Reader2, err error) {
 		return nil, fmt.Errorf("%w: %d", errDictSize, dictSize)
 	}
 
-	r = &Reader2{r: lzma2, cstate: start}
+	r = &Reader2{in: bytereader.Progress{R: lzma2}, cstate: start}
+	r.r = &r.in
 
 	r.dict, err = newDecoderDict(dictSize)
 	if err != nil {
@@ -80,7 +86,7 @@ func (r *Reader2) DictSize() int { return r.dict.dictCap }
 // allocations per block, paid most dearly on the multi-block files the
 // parallel reader exists for.
 func (r *Reader2) Reset(z io.Reader) {
-	r.r = z
+	r.in = bytereader.Progress{R: z}
 	r.err = nil
 	r.cstate = start
 	// What the previous sequence decoded and the caller never read is not

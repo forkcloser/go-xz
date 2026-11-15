@@ -443,6 +443,166 @@ func referenceLZMA2Verdict(dictCap int) func([]byte) verdict {
 	}
 }
 
+// stalled serves the first bytes of a stream and then answers every Read
+// with no byte and no error, which io.Reader allows and asks callers to
+// take as nothing having happened.
+type stalled struct {
+	data []byte
+}
+
+func (s *stalled) Read(p []byte) (int, error) {
+	n := copy(p, s.data)
+	s.data = s.data[n:]
+
+	return n, nil
+}
+
+// TestContractInputMakingNoProgress: an input that goes on answering with
+// no byte and no error ends the reader with io.ErrNoProgress, wherever in
+// the stream it stalls: in the header, in a chunk header, in a chunk.
+func TestContractInputMakingNoProgress(t *testing.T) {
+	t.Parallel()
+
+	data, ok := corpus(t)["mixed"]
+	if !ok {
+		t.Fatal("no mixed corpus")
+	}
+
+	c := w2case{dict: lzma.MinDictSize, opts: []lzma.Option{lzma.WithDictSize(lzma.MinDictSize)}}
+
+	for name, tc := range map[string]struct {
+		stream []byte
+		read   func(io.Reader) error
+	}{
+		"classic": {classic(t, wcase{}, data), func(in io.Reader) error {
+			r, err := lzma.NewReader(in)
+			if err != nil {
+				return err
+			}
+
+			_, err = io.Copy(io.Discard, r)
+
+			return err
+		}},
+		"LZMA2": {lzma2(t, c, data), func(in io.Reader) error {
+			r, err := lzma.NewReader2(in, c.dictSize())
+			if err != nil {
+				return err
+			}
+
+			_, err = io.Copy(io.Discard, r)
+
+			return err
+		}},
+	} {
+		for _, served := range []int{0, 1, 3, 12, 20, len(tc.stream) / 2, len(tc.stream) - 1} {
+			done := make(chan error, 1)
+
+			go func() { done <- tc.read(&stalled{data: tc.stream[:served]}) }()
+
+			select {
+			case err := <-done:
+				if !errors.Is(err, io.ErrNoProgress) {
+					t.Errorf("%s, stalled after %d bytes: %v, want io.ErrNoProgress", name, served, err)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatalf("%s, stalled after %d bytes: the reader is still asking", name, served)
+			}
+		}
+	}
+
+	// The input Reset gives a Reader2 is bounded as the first one is.
+	sequence := lzma2(t, c, data)
+
+	r, err := lzma.NewReader2(bytes.NewReader(sequence), c.dictSize())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = io.Copy(io.Discard, r); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, served := range []int{0, 1, 3, len(sequence) / 2, len(sequence) - 1} {
+		done := make(chan error, 1)
+
+		go func() {
+			r.Reset(&stalled{data: sequence[:served]})
+
+			_, rerr := io.Copy(io.Discard, r)
+			done <- rerr
+		}()
+
+		select {
+		case rerr := <-done:
+			if !errors.Is(rerr, io.ErrNoProgress) {
+				t.Errorf("after Reset, stalled after %d bytes: %v, want io.ErrNoProgress", served, rerr)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("after Reset, stalled after %d bytes: the reader is still asking", served)
+		}
+	}
+}
+
+// hesitant serves a stream a few bytes at a time and answers with no byte
+// and no error a number of times before each: slow, and not stalled.
+type hesitant struct {
+	data                []byte
+	every, pauses, owed int
+}
+
+func (h *hesitant) Read(p []byte) (int, error) {
+	if h.owed > 0 {
+		h.owed--
+
+		return 0, nil
+	}
+
+	if len(h.data) == 0 {
+		return 0, io.EOF
+	}
+
+	n := copy(p[:min(len(p), h.every)], h.data)
+	h.data = h.data[n:]
+	h.owed = h.pauses
+
+	return n, nil
+}
+
+// TestContractInputPausingIsRead: only answers with nothing in a row count
+// against an input. One that pauses before every seven bytes, once or
+// ninety-nine times, is read whole however many pauses that makes.
+func TestContractInputPausingIsRead(t *testing.T) {
+	t.Parallel()
+
+	data, ok := corpus(t)["mixed"]
+	if !ok {
+		t.Fatal("no mixed corpus")
+	}
+
+	c := w2case{dict: lzma.MinDictSize, opts: []lzma.Option{lzma.WithDictSize(lzma.MinDictSize)}}
+
+	for _, pauses := range []int{1, 99} {
+		r, err := lzma.NewReader(&hesitant{data: classic(t, wcase{}, data), every: 7, pauses: pauses})
+		if err != nil {
+			t.Fatalf("classic, %d pauses: %v", pauses, err)
+		}
+
+		if got, rerr := io.ReadAll(r); rerr != nil || !bytes.Equal(got, data) {
+			t.Errorf("classic, %d pauses: %d bytes, %v", pauses, len(got), rerr)
+		}
+
+		r2, err := lzma.NewReader2(&hesitant{data: lzma2(t, c, data), every: 7, pauses: pauses}, c.dictSize())
+		if err != nil {
+			t.Fatalf("LZMA2, %d pauses: %v", pauses, err)
+		}
+
+		if got, rerr := io.ReadAll(r2); rerr != nil || !bytes.Equal(got, data) {
+			t.Errorf("LZMA2, %d pauses: %d bytes, %v", pauses, len(got), rerr)
+		}
+	}
+}
+
 // TestContractLZMA2Malformed: on every byte flip and every truncation of
 // the corpus's chunk sequences, the reader follows the reference's verdict
 // under liblzma's chunk rules.
