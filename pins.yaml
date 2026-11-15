@@ -16,6 +16,7 @@ pins:
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
       version: 0.2.0
+      source: 8d6e6f92a11e388040e557d7bd464423eb3296e0e91f8b816e030ec27c5fa791
       sha256: 5213fbe2f39b5f76ad6f20dd60960000e0a65047857a6919963f16b18e71c731
   - name: xz-utils-linux-arm64
     renovate: github-releases forkcloser/testbin
@@ -24,6 +25,7 @@ pins:
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
       version: 0.2.0
+      source: ae24534d50128c9f5e13687a1860a8b1c40be042a7fbd2063a6ffd2d656f5c04
       sha256: feb0eea44ecad855d44721bcc6d6097997bff2c79f04e83f53908a19c775afe1
   - name: xz-utils-darwin-arm64
     renovate: github-releases forkcloser/testbin
@@ -32,6 +34,7 @@ pins:
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
       version: 0.2.0
+      source: b80e17700a135691e698172ea99e9ddec085aec431f6ac0f326ee35866486736
       sha256: 40e4856d6f43fcb96279ebc8d4fe4d701bbeaf635e59366d54e975ddaf719c51
   - name: xz-utils-windows-amd64
     renovate: github-releases forkcloser/testbin
@@ -40,6 +43,7 @@ pins:
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
       version: 0.2.0
+      source: 8518f901f0cfd5c464cec06e1906465357a1b2a62be0084caa4ce651d670f6db
       sha256: 39c2484d20da9a40a7f606a9d66535ec71ea4f5bc4cf6db89392166960a205fb
   - name: xz-utils-windows-arm64
     renovate: github-releases forkcloser/testbin
@@ -48,4 +52,5 @@ pins:
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
       version: 0.2.0
+      source: 57de3c42790d859acd12d1df85885a2b91efa1e262a2befed0118ced029c9f9a
       sha256: 988be120cfa30ffd1564074b9ed9d32f87d26df2849216f1959881188cf44028
