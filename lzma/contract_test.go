@@ -26,6 +26,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"testing"
+	"time"
 
 	"github.com/forkcloser/xz/v2/internal/lzmaspec"
 	"github.com/forkcloser/xz/v2/lzma"
@@ -672,6 +673,87 @@ func TestContractOutputWithinDeclaredSize(t *testing.T) {
 
 		check(t, r)
 	})
+}
+
+// TestContractFlushedChunkIsRead: Flush "writes all buffered data out to the
+// underlying stream", and a reader at the other end of it reads that data
+// without waiting for what the writer sends next: Read returns what is
+// there, as readers do. It used to go on to the next chunk's header until
+// its buffer was full, so an exchange over a flushed stream stood still.
+func TestContractFlushedChunkIsRead(t *testing.T) {
+	t.Parallel()
+
+	pr, pw := io.Pipe()
+	next := make(chan struct{})
+	written := make(chan error, 1)
+
+	go func() {
+		written <- func() error {
+			w, err := lzma.NewWriter2(pw)
+			if err != nil {
+				return err
+			}
+
+			if _, err = w.Write([]byte("hello")); err != nil {
+				return err
+			}
+
+			if err = w.Flush(); err != nil {
+				return err
+			}
+
+			<-next
+
+			if _, err = w.Write([]byte("world")); err != nil {
+				return err
+			}
+
+			if err = w.Close(); err != nil {
+				return err
+			}
+
+			return pw.Close()
+		}()
+	}()
+
+	r, err := lzma.NewReader2(pr, w2case{}.dictSize())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type read struct {
+		data string
+		err  error
+	}
+
+	first := make(chan read, 1)
+
+	go func() {
+		buf := make([]byte, 4<<10)
+
+		n, rerr := r.Read(buf)
+		first <- read{string(buf[:n]), rerr}
+	}()
+
+	select {
+	case got := <-first:
+		if got.data != "hello" || got.err != nil {
+			t.Errorf("the first Read: %q, %v", got.data, got.err)
+		}
+
+		close(next)
+	case <-time.After(10 * time.Second):
+		close(next)
+		t.Fatal("Read waits for more than the flushed chunk")
+	}
+
+	if rest, rerr := io.ReadAll(r); string(rest) != "world" || rerr != nil {
+		t.Errorf("after it: %q, %v", rest, rerr)
+	}
+
+	if werr := <-written; werr != nil {
+		t.Fatal(werr)
+	}
 }
 
 // TestContractMaxDictSize: a classic header declaring a dictionary above

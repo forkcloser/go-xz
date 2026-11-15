@@ -101,7 +101,9 @@ func uncompressed(ctype chunkType) bool {
 	return ctype == cU || ctype == cUD
 }
 
-// Read reads data from the LZMA2 chunk sequence.
+// Read reads data from the LZMA2 chunk sequence. It returns at the end of a
+// chunk with what the chunk held, without waiting for the next one, so what
+// a writer has flushed is read as it arrives.
 func (r *Reader2) Read(p []byte) (n int, err error) {
 	if r.err != nil {
 		return 0, r.err
@@ -113,29 +115,21 @@ func (r *Reader2) Read(p []byte) (n int, err error) {
 		k, err = r.chunkReader.Read(p[n:])
 		n += k
 
-		if err != nil {
-			switch {
-			case errors.Is(err, io.EOF):
-				err = r.nextChunk()
-				if err == nil {
-					continue
-				}
-			case errors.Is(err, io.ErrUnexpectedEOF) && r.chunkReader == r.decoder:
-				// A compressed chunk is read into memory in full before
-				// the decoder starts (startChunk), so the decoder running
-				// out of bytes is not the input ending early: the chunk
-				// header promised a chunk its bytes do not contain.
-				err = corruptf("lzma: compressed chunk ends before its data does")
+		switch {
+		case err == nil:
+			if k == 0 {
+				r.err = errNoProgress
+				return n, r.err
 			}
-
-			r.err = err
-
-			return n, err
-		}
-
-		if k == 0 {
-			r.err = errNoProgress
-			return n, r.err
+		case errors.Is(err, io.EOF) && n > 0:
+			// The chunk ended. What it gave is returned now: the next
+			// chunk may not be written yet, and waiting for its header
+			// would hold back data the writer has flushed.
+			return n, nil
+		default:
+			if r.err = r.chunkEnded(err); r.err != nil {
+				return n, r.err
+			}
 		}
 	}
 
@@ -146,6 +140,23 @@ func (r *Reader2) Read(p []byte) (n int, err error) {
 // end-of-stream chunk.
 func (r *Reader2) EOS() bool {
 	return r.cstate == stop
+}
+
+// chunkEnded is what follows the chunk reader's error: after the chunk's
+// end, the next chunk, and nil once it is ready to be read.
+func (r *Reader2) chunkEnded(err error) error {
+	switch {
+	case errors.Is(err, io.EOF):
+		return r.nextChunk()
+	case errors.Is(err, io.ErrUnexpectedEOF) && r.chunkReader == r.decoder:
+		// A compressed chunk is read into memory in full before the
+		// decoder starts (startChunk), so the decoder running out of
+		// bytes is not the input ending early: the chunk header promised
+		// a chunk its bytes do not contain.
+		return corruptf("lzma: compressed chunk ends before its data does")
+	}
+
+	return err
 }
 
 // nextChunk moves on from a chunk that ended to the next one's header.
