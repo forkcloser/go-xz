@@ -112,9 +112,11 @@ func WithSingleStream() Option {
 // the one a writer without workers writes at that block size, byte for
 // byte, whatever the number of workers. Each block being encoded is held
 // in memory with what it compresses to, so a writer with n workers needs
-// about n times twice the block size, and its encoders; and an error from
-// the underlying writer is returned by the Write or Close that meets it,
-// which may be a later one than the Write whose data it lost.
+// about n times twice the block size, and n encoders, each about six to
+// eleven times the smaller of the dictionary and the block size, some
+// 145 KiB at the smallest; and an error from the underlying writer is
+// returned by the Write or Close that meets it, which may be a later one
+// than the Write whose data it lost.
 //
 // NewReader, NewWriter.
 func WithWorkers(n int) Option {

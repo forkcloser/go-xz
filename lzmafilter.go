@@ -107,6 +107,15 @@ func (f lzmaFilter) writeCloser(w io.WriteCloser, o *options) (io.WriteCloser, e
 		return nil, unsupportedf("xz: LZMA2 dictionary size %d exceeds the address space", f.dictSize)
 	}
 
+	// A block refers no further back than its own start, so its encoder
+	// needs no more dictionary than the block is long, and no less, or it
+	// stops finding what the block holds; and an encoder costs six times
+	// its dictionary and more, for every block. The block header still
+	// states the dictionary asked for.
+	if o.blockSize < int64(dc) {
+		dc = int(max(o.blockSize, lzma.MinDictSize))
+	}
+
 	fw, err := lzma.NewWriter2(w, lzma.WithDictSize(dc), lzma.WithProperties(o.props.LC, o.props.LP, o.props.PB))
 	if err != nil {
 		return nil, err
