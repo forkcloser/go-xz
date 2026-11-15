@@ -7,6 +7,7 @@ package xz
 import (
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
 	"slices"
 
@@ -334,7 +335,7 @@ func apply(opts []Option, allowed optionSet, constructor string) (options, error
 		workers:     1,
 		dictSize:    defaultDictSize,
 		props:       lzma.Properties{LC: 3, LP: 0, PB: 2},
-		blockSize:   maxInt64,
+		blockSize:   math.MaxInt64,
 	}
 
 	for _, opt := range opts {

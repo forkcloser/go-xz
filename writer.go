@@ -26,9 +26,6 @@ var (
 	errCounterOverflow = errors.New("xz: counter overflow")
 )
 
-// maxInt64 defines the maximum 64-bit signed integer.
-const maxInt64 = 1<<63 - 1
-
 // verifyFilters checks the filter list for the length and the right
 // sequence of filters.
 func verifyFilters(f []filter) error {
@@ -325,7 +322,6 @@ type blockWriter struct {
 	w         io.WriteCloser
 	n         int64
 	blockSize int64
-	closed    bool
 	headerLen int
 
 	filters []filter
@@ -367,10 +363,6 @@ var errNoSpace = errors.New("xz: no space")
 
 // Write writes uncompressed data to the block writer.
 func (bw *blockWriter) Write(p []byte) (n int, err error) {
-	if bw.closed {
-		return 0, errClosed
-	}
-
 	t := bw.blockSize - bw.n
 	if int64(len(p)) > t {
 		err = errNoSpace
@@ -391,11 +383,6 @@ func (bw *blockWriter) Write(p []byte) (n int, err error) {
 
 // Close closes the writer.
 func (bw *blockWriter) Close() error {
-	if bw.closed {
-		return errClosed
-	}
-
-	bw.closed = true
 	if err := bw.w.Close(); err != nil {
 		return err
 	}
