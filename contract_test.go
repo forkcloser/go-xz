@@ -529,11 +529,11 @@ func TestContractWriteTo(t *testing.T) {
 }
 
 // lyingIndex returns file with one record of its one-stream index altered
-// by one on the last byte of the field (0 the unpadded size, 1 the
+// by delta on the first byte of the field (0 the unpadded size, 1 the
 // uncompressed size) and the index CRC-32 recomputed, so only the records
 // themselves disagree with the blocks. The footer's CRC covers the
 // backward size and the flags, not the index, and stands.
-func lyingIndex(file []byte, record, field int) []byte {
+func lyingIndex(file []byte, record, field, delta int) []byte {
 	out := bytes.Clone(file)
 	backward := int(binary.LittleEndian.Uint32(out[len(out)-8:]))
 	start := len(out) - 12 - (backward+1)*4
@@ -547,12 +547,19 @@ func lyingIndex(file []byte, record, field int) []byte {
 
 	for i := 0; i <= record; i++ {
 		for f := range 2 {
+			at := p.pos
+
 			if _, err := p.vli(); err != nil {
 				panic(err)
 			}
 
 			if i == record && f == field {
-				index[p.pos-1]++
+				low := int(index[at]&0x7f) + delta
+				if low < 0 || low > 0x7f {
+					panic("the delta leaves the field's first byte")
+				}
+
+				index[at] = index[at]&0x80 | byte(low)
 			}
 		}
 	}
@@ -562,11 +569,58 @@ func lyingIndex(file []byte, record, field int) []byte {
 	return out
 }
 
+// holed is a file that is whole until armed, and then serves nothing of
+// thirty bytes of itself: a read that reaches them stops short there.
+type holed struct {
+	*bytes.Reader
+
+	hole  int64
+	armed bool
+}
+
+func (h *holed) ReadAt(p []byte, off int64) (int, error) {
+	if !h.armed || off+int64(len(p)) <= h.hole || off >= h.hole+30 {
+		return h.Reader.ReadAt(p, off)
+	}
+
+	n, _ := h.Reader.ReadAt(p[:max(0, h.hole-off)], off)
+
+	return n, io.EOF
+}
+
+// TestContractSourceServesLess: with workers, a source that stops serving
+// part of a block after the file was opened whole is io.ErrUnexpectedEOF,
+// "a stream cut short": the index is right and the bytes are not there,
+// which is the transport's doing and not the file's.
+func TestContractSourceServesLess(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, data, 1000))
+
+	// Past the stream header and the first block's header, inside its data.
+	in := &holed{Reader: bytes.NewReader(file), hole: 40}
+
+	r, err := xz.NewReader(in, xz.WithWorkers(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	in.armed = true
+
+	_, err = io.ReadAll(r)
+	if !errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, xz.ErrCorrupt) {
+		t.Errorf("%v, want io.ErrUnexpectedEOF and no match of ErrCorrupt", err)
+	}
+}
+
 // TestContractLyingIndex: an index whose record disagrees with the block it
 // describes, under a valid index CRC, is the file a hostile writer makes;
 // the reference refuses it and so do both readers, whether the lie is the
 // unpadded size, by which the parallel reader locates the blocks, or the
-// uncompressed size, in the first record or the last.
+// uncompressed size, in the first record or the last, and whether it says
+// more than the block holds or less. "Sizes that disagree" are ErrCorrupt:
+// the file is all there, so neither reader may call it cut short.
 func TestContractLyingIndex(t *testing.T) {
 	t.Parallel()
 
@@ -581,19 +635,56 @@ func TestContractLyingIndex(t *testing.T) {
 			}
 
 			for record := range 3 {
-				for field, fname := range []string{"unpadded", "uncompressed"} {
-					bad := lyingIndex(file, record, field)
+				for _, lie := range []struct {
+					name         string
+					field, delta int
+				}{
+					{"unpadded +1", 0, 1},
+					{"unpadded -4", 0, -4},
+					{"unpadded +4", 0, 4},
+					{"uncompressed +1", 1, 1},
+					{"uncompressed -1", 1, -1},
+				} {
+					bad := lyingIndex(file, record, lie.field, lie.delta)
 					what := cname + ", sizes " + strconv.FormatBool(sizes) +
-						": record " + strconv.Itoa(record) + " " + fname
+						": record " + strconv.Itoa(record) + " " + lie.name
 
 					if _, err := refParse(bad); err == nil {
 						t.Fatalf("%s: the reference accepts the lie", what)
 					}
 
-					ref, err := refParse(bad)
 					sequential, parallel := both(bad)
-					classify(t, what+", sequential", verdict{ref, err}, sequential)
-					classify(t, what+", parallel", verdict{ref, err}, parallel)
+
+					if !errors.Is(sequential.err, xz.ErrCorrupt) {
+						t.Errorf("%s, sequential: %v, want an error matching ErrCorrupt", what, sequential.err)
+					}
+
+					if !errors.Is(parallel.err, xz.ErrCorrupt) {
+						t.Errorf("%s, parallel: %v, want an error matching ErrCorrupt", what, parallel.err)
+					}
+				}
+			}
+
+			// Four bytes taken from one block and given to another: the
+			// sum the parallel reader holds the stream to stands, and only
+			// the blocks tell, the first by running out of its section.
+			for _, move := range [][2]int{{0, 1}, {1, 2}, {2, 0}} {
+				bad := lyingIndex(lyingIndex(file, move[0], 0, -4), move[1], 0, 4)
+				what := cname + ", sizes " + strconv.FormatBool(sizes) + ": four bytes moved from record " +
+					strconv.Itoa(move[0]) + " to " + strconv.Itoa(move[1])
+
+				if _, err := refParse(bad); err == nil {
+					t.Fatalf("%s: the reference accepts the lie", what)
+				}
+
+				sequential, parallel := both(bad)
+
+				if !errors.Is(sequential.err, xz.ErrCorrupt) {
+					t.Errorf("%s, sequential: %v, want an error matching ErrCorrupt", what, sequential.err)
+				}
+
+				if !errors.Is(parallel.err, xz.ErrCorrupt) {
+					t.Errorf("%s, parallel: %v, want an error matching ErrCorrupt", what, parallel.err)
 				}
 			}
 		}
