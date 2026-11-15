@@ -234,6 +234,81 @@ func TestBoundedStreams(t *testing.T) {
 	}
 }
 
+// TestBoundedWriterSmallBlocks: a block's encoder is sized by the block
+// when the block is shorter than the dictionary. A megabyte in blocks of
+// 4 KiB at the default dictionary allocates within 128 MiB, where it
+// measures under 40 and an encoder at the full 8 MiB dictionary for each
+// of the 256 blocks would be 12 GiB. The block headers still state the
+// dictionary asked for, and the file is the data.
+//
+//nolint:paralleltest // measures the process's TotalAlloc against a budget; a parallel test's allocations would count against it
+func TestBoundedWriterSmallBlocks(t *testing.T) {
+	const budget = 128 << 20
+
+	data := cData(1 << 20)
+	whole := writeAll(t, nil, data)
+
+	for name, opts := range map[string][]xz.Option{
+		"no workers": {xz.WithBlockSize(4 << 10)},
+		"workers":    {xz.WithBlockSize(4 << 10), xz.WithWorkers(2)},
+	} {
+		var before, after runtime.MemStats
+
+		runtime.ReadMemStats(&before)
+
+		file := writeAll(t, opts, data)
+
+		runtime.ReadMemStats(&after)
+
+		if used := after.TotalAlloc - before.TotalAlloc; used > budget {
+			t.Errorf("%s: %d bytes allocated for 256 blocks of 4 KiB; budget is %d", name, used, budget)
+		}
+
+		// The stream header is twelve bytes; the block header that follows
+		// is its size, its flags, the LZMA2 filter's ID and properties
+		// size, and the dictionary's code.
+		if file[16] != whole[16] {
+			t.Errorf("%s: the block header states dictionary code %d, want the default's %d", name, file[16], whole[16])
+		}
+
+		if got, err := refParse(file); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s: the reference reads %d bytes, %v", name, len(got), err)
+		}
+	}
+}
+
+// TestBoundedBlockEncoderSeesItsBlock: an encoder sized by its block still
+// finds what the block holds. 40,000 random bytes and then the first 25,000
+// of them again, in a block of 64 KiB under the default dictionary, are
+// written in little more than the 40,000: the copy lies 40,000 bytes back,
+// which an encoder with a dictionary shorter than the block would not see.
+func TestBoundedBlockEncoderSeesItsBlock(t *testing.T) {
+	t.Parallel()
+
+	rng := rand.New(rand.NewPCG(3, 9))
+	random := make([]byte, 40000)
+
+	for i := range random {
+		random[i] = byte(rng.Uint32())
+	}
+
+	data := append(bytes.Clone(random), random[:25000]...)
+
+	for name, opts := range map[string][]xz.Option{
+		"no workers": {xz.WithBlockSize(64 << 10)},
+		"workers":    {xz.WithBlockSize(64 << 10), xz.WithWorkers(2)},
+	} {
+		file := writeAll(t, opts, data)
+		if len(file) > 45000 {
+			t.Errorf("%s: %d bytes written for 40000 random bytes and a copy of 25000 of them", name, len(file))
+		}
+
+		if got, err := refParse(file); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s: the reference reads %d bytes, %v", name, len(got), err)
+		}
+	}
+}
+
 // TestBoundedWriterSizes: the writer's output for inputs around the
 // encoder's buffers, in one write, parses under the reference to the
 // input.
