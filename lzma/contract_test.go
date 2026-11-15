@@ -617,6 +617,38 @@ func TestContractValidHeader(t *testing.T) {
 	}
 }
 
+// TestContractZeroOption: "the zero Option sets nothing": each constructor
+// given one makes what it makes given none, and still refuses another's
+// option beside it.
+func TestContractZeroOption(t *testing.T) {
+	t.Parallel()
+
+	data := []byte("the zero option sets nothing")
+
+	want := classic(t, wcase{}, data)
+	if got := classic(t, wcase{opts: []lzma.Option{{}}}, data); !bytes.Equal(got, want) {
+		t.Error("NewWriter given the zero Option writes another stream")
+	}
+
+	want2 := lzma2(t, w2case{}, data)
+	if got := lzma2(t, w2case{opts: []lzma.Option{{}}}, data); !bytes.Equal(got, want2) {
+		t.Error("NewWriter2 given the zero Option writes another sequence")
+	}
+
+	r, err := lzma.NewReader(bytes.NewReader(want), lzma.Option{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, rerr := io.ReadAll(r); rerr != nil || !bytes.Equal(got, data) {
+		t.Errorf("NewReader given the zero Option: %q, %v", got, rerr)
+	}
+
+	if _, err = lzma.NewReader(bytes.NewReader(want), lzma.Option{}, lzma.WithSize(1)); err == nil {
+		t.Error("NewReader accepted WithSize beside the zero Option")
+	}
+}
+
 // TestContractOptionBounds: the readers' and writers' options are accepted
 // at the bounds of the dictionary size and the properties, and refused one
 // past them.

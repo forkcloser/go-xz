@@ -11,7 +11,7 @@ import (
 
 // An Option configures a reader or writer. Each option names the
 // constructors it applies to; a constructor handed another's option returns
-// an error.
+// an error. The zero Option sets nothing.
 type Option struct {
 	name string
 	set  func(*options)
@@ -112,7 +112,9 @@ func apply(opts []Option, allowed optionSet, constructor string) (options, error
 	}
 
 	for _, opt := range opts {
-		opt.set(&o)
+		if opt.set != nil {
+			opt.set(&o)
+		}
 	}
 
 	if err := outOfScope(opts, o.set&^allowed, constructor); err != nil {
@@ -138,6 +140,10 @@ func outOfScope(opts []Option, bad optionSet, constructor string) error {
 	}
 
 	for _, opt := range opts {
+		if opt.set == nil {
+			continue
+		}
+
 		var probe options
 
 		opt.set(&probe)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 
 	"github.com/forkcloser/xz/v2/internal/filters"
 	"github.com/forkcloser/xz/v2/lzma"
@@ -15,7 +16,7 @@ import (
 
 // An Option configures a Reader or a Writer. Each option names the
 // constructor it applies to; a constructor handed the other's option
-// returns an error.
+// returns an error. The zero Option sets nothing.
 type Option struct {
 	name string
 	set  func(*options)
@@ -64,6 +65,8 @@ var (
 	errOptionScope   = errors.New("xz: option does not apply to this constructor")
 	errMaxDictSize   = errors.New("xz: dictionary size limit out of range")
 	errWorkers       = errors.New("xz: workers must be positive")
+	errDictSize      = errors.New("xz: dictionary size out of range")
+	errProperties    = errors.New("xz: lc, lp or pb out of range")
 	errBlockSize     = errors.New("xz: block size must be positive")
 	errCheck         = errors.New("xz: unknown check")
 	errTooManyBefore = errors.New("xz: more than three filters before LZMA2")
@@ -74,6 +77,13 @@ var (
 
 // defaultDictSize is the writer's dictionary when none is asked for.
 const defaultDictSize = 8 << 20
+
+// What LZMA2 allows of the properties: lc and lp at most four between them,
+// pb at most four.
+const (
+	maxLCLP = 4
+	maxPB   = 4
+)
 
 // WithMaxDictSize bounds the dictionary a block header may ask for: a
 // block asking for more is refused with ErrUnsupported. The dictionary is
@@ -167,9 +177,13 @@ func WithCheck(c Check) Option {
 // WithFilters applies filters before LZMA2, in the order given: up to
 // three of the BCJ filters and Delta, as the format allows. NewWriter.
 func WithFilters(f ...Filter) Option {
+	// The caller's slice stays the caller's: the writer reads the chain
+	// again for every block.
+	chain := slices.Clone(f)
+
 	return Option{"WithFilters", func(o *options) {
 		o.set |= optFilters
-		o.filters = f
+		o.filters = chain
 	}}
 }
 
@@ -322,7 +336,9 @@ func apply(opts []Option, allowed optionSet, constructor string) (options, error
 	}
 
 	for _, opt := range opts {
-		opt.set(&o)
+		if opt.set != nil {
+			opt.set(&o)
+		}
 	}
 
 	if err := outOfScope(opts, o.set&^allowed, constructor); err != nil {
@@ -349,6 +365,10 @@ func outOfScope(opts []Option, bad optionSet, constructor string) error {
 	}
 
 	for _, opt := range opts {
+		if opt.set == nil {
+			continue
+		}
+
 		var probe options
 
 		opt.set(&probe)
@@ -369,6 +389,14 @@ func (o *options) validate() error {
 
 	if o.workers < 1 {
 		return fmt.Errorf("%w: %d", errWorkers, o.workers)
+	}
+
+	if !(lzma.MinDictSize <= o.dictSize && int64(o.dictSize) <= lzma.MaxDictSize) {
+		return fmt.Errorf("%w: %d", errDictSize, o.dictSize)
+	}
+
+	if p := o.props; p.LC < 0 || p.LP < 0 || p.LC+p.LP > maxLCLP || p.PB < 0 || p.PB > maxPB {
+		return fmt.Errorf("%w: lc %d, lp %d, pb %d", errProperties, p.LC, p.LP, p.PB)
 	}
 
 	if o.blockSize <= 0 {
