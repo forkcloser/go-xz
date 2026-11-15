@@ -52,12 +52,20 @@ bench: do::perf::go::bench
 
 # The differential test against upstream (ulikunitz/xz) lives in its own
 # module so the library never depends on upstream: the root go.mod stays free
-# of it and the shared `./...` recipes do not descend into it. Network on
-# first run (the upstream module is fetched through the module proxy,
-# checksum-verified like any other dependency).
+# of it and the shared `./...` recipes do not descend into it. The test holds
+# this tree to upstream, not a published version of it, so it runs in a
+# workspace of the two modules, written under .build on every run: nothing
+# committed says where a module is built from. Network on first run (the
+# upstream module is fetched through the module proxy, checksum-verified like
+# any other dependency).
 [doc('Differential test against upstream ulikunitz/xz (internal/upstreamdiff, its own module)')]
 test-upstreamdiff:
     #!/usr/bin/env bash
     set -euo pipefail
+    work="$(pwd)/.build/upstreamdiff"
+    mkdir -p "${work}"
+    rm -f "${work:?}/go.work" "${work:?}/go.work.sum"
+    export GOWORK="${work}/go.work"
+    go work init . ./internal/upstreamdiff
     cd internal/upstreamdiff
     go test ./...
