@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 
 	"github.com/forkcloser/xz/v2/internal/filters"
 	"github.com/forkcloser/xz/v2/lzma"
@@ -176,9 +177,13 @@ func WithCheck(c Check) Option {
 // WithFilters applies filters before LZMA2, in the order given: up to
 // three of the BCJ filters and Delta, as the format allows. NewWriter.
 func WithFilters(f ...Filter) Option {
+	// The caller's slice stays the caller's: the writer reads the chain
+	// again for every block.
+	chain := slices.Clone(f)
+
 	return Option{"WithFilters", func(o *options) {
 		o.set |= optFilters
-		o.filters = f
+		o.filters = chain
 	}}
 }
 

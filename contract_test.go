@@ -449,6 +449,51 @@ func TestContractWriterRefusesBeforeWriting(t *testing.T) {
 	}
 }
 
+// TestContractWriterKeepsItsFilters: the chain is the one given to
+// WithFilters. A caller that reuses its slice afterwards changes nothing in
+// a writer made from it: every block of the file has the filters the
+// writer was made with.
+func TestContractWriterKeepsItsFilters(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+
+	for wname, workers := range map[string][]xz.Option{"no workers": nil, "workers": {xz.WithWorkers(2)}} {
+		opts := func(chain []xz.Filter) []xz.Option {
+			return append([]xz.Option{xz.WithFilters(chain...), xz.WithBlockSize(1000)}, workers...)
+		}
+
+		want := writeAll(t, opts([]xz.Filter{{ID: xz.X86}}), data)
+
+		chain := []xz.Filter{{ID: xz.X86}}
+
+		var out bytes.Buffer
+
+		w, err := xz.NewWriter(&out, opts(chain)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = w.Write(data[:1500]); err != nil {
+			t.Fatal(err)
+		}
+
+		chain[0] = xz.Filter{ID: xz.Delta, Distance: 9}
+
+		if _, err = w.Write(data[1500:]); err != nil {
+			t.Fatal(err)
+		}
+
+		if err = w.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Equal(out.Bytes(), want) {
+			t.Errorf("%s: the file is not the one of the chain the writer was made with", wname)
+		}
+	}
+}
+
 // TestContractAlignment: blocks whose unpadded size takes every residue
 // modulo four, alone and as the last of several, with and without a check,
 // decode under both readers; the one that ends exactly where the index
