@@ -428,6 +428,38 @@ func TestEdgeShortSizeIsNotCorruption(t *testing.T) {
 	}
 }
 
+// TestEdgeSizeExceededIsNotAFailure: a Write refused for passing the
+// declared size took what fitted, and Close finishes the stream with it.
+func TestEdgeSizeExceededIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	w, err := lzma.NewWriter(&buf, lzma.WithSize(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := w.Write([]byte("abcdef"))
+	if n != 3 || !errors.Is(err, lzma.ErrSizeExceeded) {
+		t.Fatalf("Write past the size: %d bytes, %v; want 3 and ErrSizeExceeded", n, err)
+	}
+
+	if err = w.Close(); err != nil {
+		t.Fatalf("Close: %v; want the stream finished", err)
+	}
+
+	r, err := lzma.NewReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := io.ReadAll(r)
+	if err != nil || string(got) != "abc" {
+		t.Errorf("read back %q, %v; want abc", got, err)
+	}
+}
+
 // classicStream is data in the classic format with the default writer.
 func classicStream(tb testing.TB, data []byte) []byte {
 	tb.Helper()

@@ -19,12 +19,15 @@ import (
 // reject the input, the second that the file may be fine and worth reading
 // again from its start. Either way the reader is finished: its first error
 // is the one every later call returns.
+//
+// An option a constructor refuses matches none of them.
 var (
 	// ErrCorrupt reports that the data being read is not a valid xz stream:
 	// bad magic, a failed checksum, sizes that disagree, a reserved field
 	// that is set. Every such error from this package matches it. An I/O
-	// error from the underlying reader is passed through untouched, so it
-	// does not match.
+	// error from the underlying reader does not: it is returned as it is,
+	// except that input ending inside a stream, with io.EOF or an error
+	// wrapping it, is io.ErrUnexpectedEOF.
 	ErrCorrupt = errors.New("xz: corrupt input")
 
 	// ErrClosed reports that a reader or writer was used after Close. A

@@ -343,6 +343,16 @@ func (o *options) newStreamReader(
 ) (r *streamReader, err error) {
 	k, err := io.ReadFull(xz, data[:4])
 	if err != nil {
+		// io.ReadFull makes io.ErrUnexpectedEOF of an io.EOF that comes
+		// after some bytes, and not of an error wrapping it, which is the
+		// same end of the input.
+		if errors.Is(err, io.EOF) {
+			err = io.EOF
+			if k > 0 {
+				err = io.ErrUnexpectedEOF
+			}
+		}
+
 		if errors.Is(err, io.ErrUnexpectedEOF) && allZeros(data[:k]) {
 			// Padding comes in whole groups of four zero bytes; fewer at
 			// the end is the file's fault, where a non-zero byte starts a

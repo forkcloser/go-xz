@@ -136,7 +136,9 @@ var errSizeShort = errors.New("lzma: fewer bytes written than the header's size"
 // Close closes the writer stream. It ensures that all data from the
 // buffer will be compressed and the LZMA stream will be finished. After a
 // failed Write it returns that error and writes nothing; a second Close
-// writes nothing and reports the writer closed.
+// writes nothing and reports the writer closed. A Write refused with
+// ErrSizeExceeded is not a failed one: what fitted is in the stream, and
+// Close finishes it.
 func (w *Writer) Close() error {
 	if w.err != nil {
 		return w.err
