@@ -26,8 +26,6 @@ type decoder struct {
 	size int64
 	// end-of-stream encountered
 	eos bool
-	// EOS marker found
-	eosMarker bool
 	// err is the first failure or the clean end, returned by every Read
 	// once the dictionary has been drained.
 	err error
@@ -306,7 +304,6 @@ func (d *decoder) readOp() (op operation, err error) {
 		rd.nrange, rd.code = rng, code
 
 		if d.State.rep[0] == eosDist {
-			d.eosMarker = true
 			return operation{}, errEOS
 		}
 

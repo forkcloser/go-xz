@@ -137,11 +137,6 @@ type probTree struct {
 	bits  byte
 }
 
-// Bits provides the number of bits for the values to de- or encode.
-func (t *probTree) Bits() int {
-	return int(t.bits)
-}
-
 // init sets the probability tree to its starting state for values of the
 // given bit size, keeping the existing backing array when it is big enough.
 // An LZMA2 chunk can reset the coder state, and a state reset re-initializes

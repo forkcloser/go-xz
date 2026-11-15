@@ -49,7 +49,6 @@ import (
 // input positioned exactly at the stream's end should pass an io.ByteReader
 // of its own.
 type Reader struct {
-	lzma   io.Reader
 	header Header
 	// headerOrig stores the original header read from the stream.
 	headerOrig Header
@@ -87,7 +86,7 @@ func NewReader(lzma io.Reader, opts ...Option) (r *Reader, err error) {
 		return nil, err
 	}
 
-	r = &Reader{lzma: lzma}
+	r = &Reader{}
 	if err = r.header.unmarshalBinary(data); err != nil {
 		return nil, err
 	}
