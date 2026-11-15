@@ -494,6 +494,39 @@ func TestContractWriterKeepsItsFilters(t *testing.T) {
 	}
 }
 
+// TestContractZeroOption: "the zero Option sets nothing": a reader and a
+// writer given one are the reader and the writer given none.
+func TestContractZeroOption(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+
+	want := writeAll(t, nil, data)
+	if got := writeAll(t, []xz.Option{{}}, data); !bytes.Equal(got, want) {
+		t.Error("a writer given the zero Option writes another file")
+	}
+
+	if got := writeAll(t, []xz.Option{{}, xz.WithBlockSize(1000)}, data); !bytes.Equal(got,
+		writeAll(t, []xz.Option{xz.WithBlockSize(1000)}, data)) {
+		t.Error("the zero Option before another changes what the other does")
+	}
+
+	r, err := xz.NewReader(bytes.NewReader(want), xz.Option{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, rerr := io.ReadAll(r); rerr != nil || !bytes.Equal(got, data) {
+		t.Errorf("a reader given the zero Option: %d bytes, %v", len(got), rerr)
+	}
+
+	// Beside an option of the other constructor it is still that option
+	// that is refused.
+	if _, err = xz.NewReader(bytes.NewReader(want), xz.Option{}, xz.WithBlockSize(1)); err == nil {
+		t.Error("NewReader accepted WithBlockSize beside the zero Option")
+	}
+}
+
 // TestContractAlignment: blocks whose unpadded size takes every residue
 // modulo four, alone and as the last of several, with and without a check,
 // decode under both readers; the one that ends exactly where the index
