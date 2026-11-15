@@ -3,54 +3,53 @@
 # the tests run on, verified against testbin's release attestation (limen's
 # book, tooling.md, "Pinned artifacts beyond aqua"). The `xz-utils` recipe
 # fetches this host's and puts it on the tests' PATH as xz-utils. The archive
-# name carries XZ Utils' own version, so a testbin release that moves to a
-# newer XZ Utils changes it: Renovate's bump of `version:` then fails the
-# digest refresh, and the five urls move by hand with it. The attestation
-# is held to testbin's release workflow by name: a workflow renamed there
-# fails the next refresh, closed.
+# is named for its platform alone, so a testbin release moves `version:` and
+# nothing else, whatever XZ Utils it builds: which one that is, the recipe
+# prints. The attestation is held to testbin's release workflow by name: a
+# workflow renamed there fails the next refresh, closed.
 pins:
   - name: xz-utils-linux-amd64
     renovate: github-releases forkcloser/testbin
-    version: 0.2.0
-    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-5.8.4-linux-amd64.tar.gz
+    version: 0.3.0
+    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-linux-amd64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.2.0
-      source: 8d6e6f92a11e388040e557d7bd464423eb3296e0e91f8b816e030ec27c5fa791
-      sha256: 5213fbe2f39b5f76ad6f20dd60960000e0a65047857a6919963f16b18e71c731
+      version: 0.3.0
+      source: 719825c7485a2afca88371ff2371873f48698df0696da19e7a36fe5dfa12afce
+      sha256: fdc39c100ac658f5433c205e95bf645a38e9bdcae6e65390052a34c299390a93
   - name: xz-utils-linux-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.2.0
-    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-5.8.4-linux-arm64.tar.gz
+    version: 0.3.0
+    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-linux-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.2.0
-      source: ae24534d50128c9f5e13687a1860a8b1c40be042a7fbd2063a6ffd2d656f5c04
-      sha256: feb0eea44ecad855d44721bcc6d6097997bff2c79f04e83f53908a19c775afe1
+      version: 0.3.0
+      source: e531b43eae1dab9a68b21cc339072011fb568abbee568855e52f014a91fb248b
+      sha256: de8210709723cc651e0ecb4091777de97ded5aecd5732371f58de3ef76061e83
   - name: xz-utils-darwin-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.2.0
-    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-5.8.4-darwin-arm64.tar.gz
+    version: 0.3.0
+    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-darwin-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.2.0
-      source: b80e17700a135691e698172ea99e9ddec085aec431f6ac0f326ee35866486736
-      sha256: 40e4856d6f43fcb96279ebc8d4fe4d701bbeaf635e59366d54e975ddaf719c51
+      version: 0.3.0
+      source: a1a6aff7d4b71ca95f9cebc86eabc66e15fa9d6c707fadbe185a7647815a81fc
+      sha256: 8862c8be94dfcc5d2674ee7d59eacc4fbf802c40318b79e24fb957fb14c20631
   - name: xz-utils-windows-amd64
     renovate: github-releases forkcloser/testbin
-    version: 0.2.0
-    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-5.8.4-windows-amd64.tar.gz
+    version: 0.3.0
+    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-windows-amd64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.2.0
-      source: 8518f901f0cfd5c464cec06e1906465357a1b2a62be0084caa4ce651d670f6db
-      sha256: 39c2484d20da9a40a7f606a9d66535ec71ea4f5bc4cf6db89392166960a205fb
+      version: 0.3.0
+      source: aad0d42f4dadbdcf2ed69254286c2b45f5546350fb9c6f3944ad893394216773
+      sha256: 43fbe01249b6c252b819a8a748d83e556898cf80fcfb6f80c56a8b7ad03d81dd
   - name: xz-utils-windows-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.2.0
-    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-5.8.4-windows-arm64.tar.gz
+    version: 0.3.0
+    url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-windows-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
-      version: 0.2.0
-      source: 57de3c42790d859acd12d1df85885a2b91efa1e262a2befed0118ced029c9f9a
-      sha256: 988be120cfa30ffd1564074b9ed9d32f87d26df2849216f1959881188cf44028
+      version: 0.3.0
+      source: 7fb5e963864dda3adddddd0b6621cb20dc7266685eef056d4fab340794266e21
+      sha256: 2358e320ef1d5771182c7c57e83512d21d9ffeca2167f95c88378daa5c0a6767
