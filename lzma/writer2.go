@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+
+	"github.com/forkcloser/xz/v2/internal/fullwrite"
 )
 
 // Chunks Writer2 will not write.
@@ -51,7 +53,7 @@ func NewWriter2(lzma2 io.Writer, opts ...Option) (w *Writer2, err error) {
 	}
 
 	w = &Writer2{
-		w:      lzma2,
+		w:      fullwrite.Writer{W: lzma2},
 		start:  newState(o.props),
 		cstate: start,
 		ctype:  start.defaultChunkType(),
