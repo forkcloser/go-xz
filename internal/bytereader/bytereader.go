@@ -21,6 +21,33 @@ type reader struct {
 	p []byte
 }
 
+// Progress is a reader that gives up on an underlying reader answering
+// (0, nil) maxEmptyReads times in a row, with io.ErrNoProgress: io.ReadFull
+// asks again for ever.
+type Progress struct {
+	R io.Reader
+
+	empty int
+}
+
+// Read reads from the underlying reader.
+func (p *Progress) Read(b []byte) (int, error) {
+	n, err := p.R.Read(b)
+
+	if n > 0 || err != nil || len(b) == 0 {
+		p.empty = 0
+
+		return n, err
+	}
+
+	p.empty++
+	if p.empty >= maxEmptyReads {
+		return 0, io.ErrNoProgress
+	}
+
+	return 0, nil
+}
+
 // New returns r itself when it is an io.ByteReader, and otherwise a
 // ByteReader over it that reads one byte per call.
 func New(r io.Reader) io.ByteReader {

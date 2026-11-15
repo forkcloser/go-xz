@@ -76,8 +76,10 @@ func NewReader(lzma io.Reader, opts ...Option) (r *Reader, err error) {
 		lzma = bufio.NewReader(lzma)
 	}
 
+	// io.ReadFull asks again for ever of a reader that gives nothing, and a
+	// bufio.Reader's Read hands such an answer through.
 	data := make([]byte, HeaderLen)
-	if _, err = io.ReadFull(lzma, data); err != nil {
+	if _, err = io.ReadFull(&bytereader.Progress{R: lzma}, data); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, io.ErrUnexpectedEOF
 		}

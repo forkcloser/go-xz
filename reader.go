@@ -27,6 +27,8 @@ import (
 	"io"
 	"slices"
 	"sync"
+
+	"github.com/forkcloser/xz/v2/internal/bytereader"
 )
 
 // Reader decodes an xz file: one stream or several, concatenated with or
@@ -99,12 +101,17 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 		}
 	}
 
+	// The streams are read with io.ReadFull, which asks again for ever of
+	// an input that answers with nothing: a hundred such answers in a row
+	// end it.
+	r.xz = &bytereader.Progress{R: xz}
+
 	// Every stream of the file is read, to the end of the input, so reading
 	// ahead takes nothing a caller could want back; and stream padding,
 	// read a group at a time, is then not a system call a group. A reader
 	// of one stream reads no further than that stream.
 	if !o.singleStream {
-		r.xz = bufio.NewReader(xz)
+		r.xz = bufio.NewReader(r.xz)
 	}
 
 	if r.sr, err = o.newStreamReader(r.xz, &r.lz, &r.hdr); err != nil {
