@@ -159,7 +159,9 @@ func randomAccess(r io.Reader) (*io.SectionReader, error) {
 // Close closes the reader: Read and WriteTo then return an error matching
 // ErrClosed, unless the reader had already ended or failed, which it keeps
 // reporting. It releases the workers of a reader that decodes concurrently,
-// and is required when such a reader is abandoned before io.EOF.
+// and is required when such a reader is abandoned before io.EOF; it returns
+// once each worker has finished the block it has in hand, so not before an
+// input that has stopped answering does.
 //
 // Close may be called from another goroutine. It then cancels a Read waiting
 // on a block decoded concurrently; a Read in progress on a reader that
@@ -180,7 +182,9 @@ func (r *Reader) Close() error {
 	return nil
 }
 
-// WriteTo writes the whole remaining uncompressed data to w.
+// WriteTo writes the whole remaining uncompressed data to w. As with Read,
+// what reached w before an error reporting corrupt or truncated input may
+// end with bytes of the block that failed.
 func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 	if r.par != nil {
 		return r.par.WriteTo(w)

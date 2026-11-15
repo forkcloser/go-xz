@@ -81,8 +81,8 @@ func checkUncompressedSize(rec record) error {
 // xz with a block size limit or in multi-threaded mode, or by this
 // package's writer with WithBlockSize — decode with real
 // concurrency; a single-block file decodes on one worker. Memory in flight
-// is a bounded number of uncompressed blocks, about twice Workers plus a
-// few: the decoded queue, the block being read, and the buffer pool.
+// is a bounded number of uncompressed blocks, about twice the workers plus
+// a few: the decoded queue, the block being read, and the buffer pool.
 //
 // The parallelReader verifies the block checks, the block sizes against
 // the index, and the header, footer and index checksums of every
@@ -90,8 +90,8 @@ func checkUncompressedSize(rec record) error {
 //
 // Read and WriteTo must be called from one goroutine at a time. Close is the
 // exception: it may be called from another goroutine to cancel a Read that is
-// waiting on a block, which is what makes it usable for abandoning a reader
-// whose input has gone slow.
+// waiting on a block. It waits for the block each worker has in hand, so it
+// does not return before an input that has stopped answering.
 type parallelReader struct {
 	opts options
 
