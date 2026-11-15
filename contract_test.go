@@ -528,6 +528,68 @@ func TestContractWriteTo(t *testing.T) {
 	}
 }
 
+// TestContractReservedCheck: "input this package cannot handle matches
+// ErrUnsupported". The twelve check IDs the format reserves, in a stream
+// that is otherwise whole and under valid CRCs, are that: the stream is
+// well formed. A bit set in the half of the byte the format keeps for
+// itself is ErrCorrupt, and so is a footer naming another check than the
+// header, a reserved one included. ValidHeader, which "checks whether data
+// is a correct xz file header", follows: a header with a reserved check is
+// one, a header with a reserved bit is not.
+func TestContractReservedCheck(t *testing.T) {
+	t.Parallel()
+
+	for id := range byte(16) {
+		switch id {
+		case flagNone, flagCRC32, flagCRC64, flagSHA256:
+			continue
+		}
+
+		file := refStream(refOptions{check: id, dictCode: 20}, nil)
+
+		sequential, parallel := both(file)
+		for name, got := range map[string]verdict{"sequential": sequential, "parallel": parallel} {
+			if !errors.Is(got.err, xz.ErrUnsupported) || errors.Is(got.err, xz.ErrCorrupt) {
+				t.Errorf("check %#x, %s: %v, want an error matching ErrUnsupported alone", id, name, got.err)
+			}
+		}
+
+		if !xz.ValidHeader(file[:xz.HeaderLen]) {
+			t.Errorf("check %#x: ValidHeader refuses a correct header", id)
+		}
+	}
+
+	for _, flags := range []byte{0x10, 0x14, 0x80, 0xff} {
+		file := refStream(refOptions{check: flags, dictCode: 20}, nil)
+
+		sequential, parallel := both(file)
+		for name, got := range map[string]verdict{"sequential": sequential, "parallel": parallel} {
+			if !errors.Is(got.err, xz.ErrCorrupt) {
+				t.Errorf("stream flags %#x, %s: %v, want an error matching ErrCorrupt", flags, name, got.err)
+			}
+		}
+
+		if xz.ValidHeader(file[:xz.HeaderLen]) {
+			t.Errorf("stream flags %#x: ValidHeader accepts a header with a reserved bit", flags)
+		}
+	}
+
+	// The footer is its CRC-32, the backward size, the two bytes of the
+	// stream flags and the magic: a reserved check in it, under a CRC
+	// recomputed, in a stream whose header says CRC-32.
+	file := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, cData(300), 0))
+	footer := file[len(file)-12:]
+	footer[9] = 0x02
+	binary.LittleEndian.PutUint32(footer, crc32.ChecksumIEEE(footer[4:10]))
+
+	sequential, parallel := both(file)
+	for name, got := range map[string]verdict{"sequential": sequential, "parallel": parallel} {
+		if !errors.Is(got.err, xz.ErrCorrupt) {
+			t.Errorf("a footer naming another check, %s: %v, want an error matching ErrCorrupt", name, got.err)
+		}
+	}
+}
+
 // seeker is a file whose nth Seek fails.
 type seeker struct {
 	*bytes.Reader
