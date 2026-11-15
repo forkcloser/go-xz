@@ -704,17 +704,17 @@ func (d *parallelDecoder) decodeBlock(bd *blockDesc, bufp *[]byte, s *workerScra
 	*bufp = buf
 
 	for n := 0; ; {
-		var k int
+		// Not io.ReadFull, which turns the block's own end into the
+		// error a cut input gives.
+		for n < len(buf) && err == nil {
+			var k int
 
-		k, err = io.ReadFull(br, buf[n:])
-		n += k
+			k, err = br.Read(buf[n:])
+			n += k
+		}
 
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				err = io.ErrUnexpectedEOF
-			}
-
-			return nil, err
+			return nil, blockEnd(err, sr, bd)
 		}
 
 		if n == total {
@@ -741,7 +741,7 @@ func (d *parallelDecoder) decodeBlock(bd *blockDesc, bufp *[]byte, s *workerScra
 	}
 
 	if !errors.Is(err, io.EOF) {
-		return nil, err
+		return nil, blockEnd(err, sr, bd)
 	}
 
 	if br.record() != (record{bd.unpaddedSize, bd.uncompressedSize}) {
@@ -749,6 +749,24 @@ func (d *parallelDecoder) decodeBlock(bd *blockDesc, bufp *[]byte, s *workerScra
 	}
 
 	return buf, nil
+}
+
+// blockEnd classifies a block that ended before the size its index record
+// gives it. The block is read through a section of the file that ends where
+// the record says the block does, so a block that ends first, or that runs
+// out of the section, disagrees with its record: corruption, in a file that
+// is all there. Only a source serving less than the section is cut short.
+func blockEnd(err error, sr *io.SectionReader, bd *blockDesc) error {
+	switch {
+	case errors.Is(err, io.EOF):
+		return corruptf("xz: block at offset %d is shorter than its index record", bd.offset)
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		if pos, serr := sr.Seek(0, io.SeekCurrent); serr == nil && pos == sr.Size() {
+			return corruptf("xz: block at offset %d is longer than its index record", bd.offset)
+		}
+	}
+
+	return err
 }
 
 // Read reads the uncompressed data stream. The blocks are decoded

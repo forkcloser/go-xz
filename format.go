@@ -68,18 +68,23 @@ const (
 	checkSHA256 byte = 0xa
 )
 
-// errInvalidFlags indicates that flags are invalid.
+// errInvalidFlags is a stream flags field with reserved bits set.
 var errInvalidFlags = corruptf("xz: invalid flags")
 
-// verifyFlags returns the error errInvalidFlags if the value is
-// invalid.
+// maxCheckID is the largest check ID the stream flags can carry: the low
+// four bits, the rest reserved.
+const maxCheckID = 0x0f
+
+// verifyFlags refuses a check this package does not have as unsupported:
+// the format reserves it, and a stream using it is well formed. The bits
+// the format keeps for itself are the header's and the footer's to refuse.
 func verifyFlags(flags byte) error {
 	switch flags {
 	case checkNone, checkCRC32, checkCRC64, checkSHA256:
 		return nil
-	default:
-		return errInvalidFlags
 	}
+
+	return unsupportedf("xz: check type %#x is not supported", flags)
 }
 
 // newHashFunc returns a function that creates hash instances for the
@@ -95,7 +100,7 @@ func newHashFunc(flags byte) (newHash func() hash.Hash, err error) {
 	case checkSHA256:
 		newHash = sha256.New
 	default:
-		err = errInvalidFlags
+		err = verifyFlags(flags)
 	}
 
 	return newHash, err
@@ -144,9 +149,11 @@ func (h *header) UnmarshalBinary(data []byte) error {
 		return errInvalidFlags
 	}
 
+	// A check this package does not have is newHashFunc's to refuse, once
+	// the header and the footer have been held to each other.
 	flags := data[7]
-	if err := verifyFlags(flags); err != nil {
-		return err
+	if flags > maxCheckID {
+		return errInvalidFlags
 	}
 
 	h.flags = flags
@@ -254,8 +261,8 @@ func (f *footer) UnmarshalBinary(data []byte) error {
 	}
 
 	g.flags = data[9]
-	if err := verifyFlags(g.flags); err != nil {
-		return err
+	if g.flags > maxCheckID {
+		return errInvalidFlags
 	}
 
 	*f = g
