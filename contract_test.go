@@ -34,6 +34,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/forkcloser/xz/v2"
 	"github.com/forkcloser/xz/v2/lzma"
@@ -526,6 +527,69 @@ func TestContractZeroOption(t *testing.T) {
 	// that is refused.
 	if _, err = xz.NewReader(bytes.NewReader(want), xz.Option{}, xz.WithBlockSize(1)); err == nil {
 		t.Error("NewReader accepted WithBlockSize beside the zero Option")
+	}
+}
+
+// stalledInput serves the first bytes of a file and then answers every Read
+// with no byte and no error, which io.Reader allows and asks callers to
+// take as nothing having happened.
+type stalledInput struct {
+	data []byte
+}
+
+func (s *stalledInput) Read(p []byte) (int, error) {
+	n := copy(p, s.data)
+	s.data = s.data[n:]
+
+	return n, nil
+}
+
+// TestContractInputMakingNoProgress: an input that goes on answering with
+// no byte and no error ends the reader with io.ErrNoProgress, wherever in
+// the file it stalls: in a stream header, a block header, a block, a check,
+// the index or the footer, in a reader of every stream and in a reader of
+// one.
+func TestContractInputMakingNoProgress(t *testing.T) {
+	t.Parallel()
+
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, cData(180), 60))
+
+	for name, opts := range map[string][]xz.Option{
+		"every stream":        nil,
+		"one stream":          {xz.WithSingleStream()},
+		"workers on a stream": {xz.WithWorkers(4)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			done := make(chan struct{})
+
+			go func() {
+				defer close(done)
+
+				for served := range file {
+					err := func() error {
+						r, err := xz.NewReader(&stalledInput{data: file[:served]}, opts...)
+						if err != nil {
+							return err
+						}
+
+						_, err = io.Copy(io.Discard, r)
+
+						return err
+					}()
+					if !errors.Is(err, io.ErrNoProgress) {
+						t.Errorf("stalled after %d of %d bytes: %v, want io.ErrNoProgress", served, len(file), err)
+					}
+				}
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				t.Fatal("a reader is still asking")
+			}
+		})
 	}
 }
 
