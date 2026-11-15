@@ -44,6 +44,7 @@ var (
 	errDictSize     = errors.New("lzma: dictionary size out of range")
 	errMaxDictSize  = errors.New("lzma: dictionary size limit out of range")
 	errNegativeSize = errors.New("lzma: negative size")
+	errSizeTooLarge = errors.New("lzma: size above a pebibyte")
 )
 
 // defaultDictSize is the writers' dictionary when none is asked for.
@@ -85,11 +86,11 @@ func WithProperties(lc, lp, pb int) Option {
 	}}
 }
 
-// WithSize declares the uncompressed size in the classic LZMA header: Write
-// accepts exactly that many bytes and refuses the rest with
-// ErrSizeExceeded, and the stream carries no end marker unless
-// WithEOSMarker asks for one. Without it the size is unknown and the end
-// marker is written. NewWriter.
+// WithSize declares the uncompressed size in the classic LZMA header, at
+// most a pebibyte (1024^5), the largest the reader takes: Write accepts
+// exactly that many bytes and refuses the rest with ErrSizeExceeded, and
+// the stream carries no end marker unless WithEOSMarker asks for one.
+// Without it the size is unknown and the end marker is written. NewWriter.
 func WithSize(n int64) Option {
 	return Option{"WithSize", func(o *options) {
 		o.set |= optSize
@@ -171,6 +172,11 @@ func (o *options) validate() error {
 
 	if o.set&optSize != 0 && o.size < 0 {
 		return fmt.Errorf("%w: %d", errNegativeSize, o.size)
+	}
+
+	// What the reader refuses to read, the writer does not write.
+	if o.size > maxStreamSize {
+		return fmt.Errorf("%w: %d", errSizeTooLarge, o.size)
 	}
 
 	return nil

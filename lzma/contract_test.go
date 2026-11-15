@@ -646,6 +646,25 @@ func TestContractHeaderDictSize(t *testing.T) {
 	}
 }
 
+// TestContractSizeTheReaderTakes: WithSize is "at most a pebibyte, the
+// largest the reader takes": the writer refuses to declare what its own
+// reader would refuse to read.
+func TestContractSizeTheReaderTakes(t *testing.T) {
+	t.Parallel()
+
+	if _, err := lzma.NewWriter(io.Discard, lzma.WithSize(1<<50)); err != nil {
+		t.Errorf("a pebibyte: %v", err)
+	}
+
+	for _, size := range []int64{1<<50 + 1, 1<<63 - 1} {
+		var out bytes.Buffer
+
+		if _, err := lzma.NewWriter(&out, lzma.WithSize(size)); err == nil || out.Len() != 0 {
+			t.Errorf("size %d: %v, %d bytes written", size, err, out.Len())
+		}
+	}
+}
+
 // TestContractValidHeader: the format sniff accepts the dictionary sizes
 // the reference encoders emit, at 2^10 and up, 2^32-1 included, and an
 // explicit size to 256 GiB; it refuses other sizes and a wrong length.
