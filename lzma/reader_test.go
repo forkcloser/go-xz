@@ -472,8 +472,8 @@ func TestZeroPrefixIssue(t *testing.T) {
 				return
 			}
 
-			h, ok := l.Header()
-			t.Logf("Header %+v ok %v", h, ok)
+			h := l.Header()
+			t.Logf("Header %+v", h)
 
 			actualDictSize := len(l.d.Dict.buf.data) - 1
 			t.Logf("Actual dictionary size: %d", actualDictSize)
