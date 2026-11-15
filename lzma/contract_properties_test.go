@@ -2,6 +2,7 @@ package lzma_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"runtime"
@@ -135,5 +136,45 @@ func TestContractReader2AllocatesTheDictionaryLazily(t *testing.T) {
 
 	if grown := int64(after.HeapAlloc) - int64(before.HeapAlloc); grown > 64<<20 {
 		t.Errorf("decoding a 29-byte stream under a 1 GiB dictionary grew the heap by %d bytes", grown)
+	}
+}
+
+// TestContractReaderAllocatesTheDictionaryLazily: the classic reader takes
+// whatever dictionary a header states because the dictionary "is allocated
+// as the data needs it, never the declared size up front". A five-byte
+// stream whose header states 2 GiB, or the format's largest, is opened and
+// read within a megabyte of allocations, where it measures under a hundred
+// kilobytes.
+//
+//nolint:paralleltest // measures the process's TotalAlloc against a budget; a parallel test's allocations would count against it
+func TestContractReaderAllocatesTheDictionaryLazily(t *testing.T) {
+	const budget = 1 << 20
+
+	stream := classic(t, wcase{}, []byte("hello"))
+
+	for _, stated := range []uint32{1 << 31, 1<<32 - 1} {
+		large := bytes.Clone(stream)
+		binary.LittleEndian.PutUint32(large[1:], stated)
+
+		var before, after runtime.MemStats
+
+		runtime.ReadMemStats(&before)
+
+		r, err := lzma.NewReader(bytes.NewReader(large))
+		if err != nil {
+			t.Fatalf("a header stating %d: %v", stated, err)
+		}
+
+		got, err := io.ReadAll(r)
+
+		runtime.ReadMemStats(&after)
+
+		if err != nil || string(got) != "hello" {
+			t.Fatalf("a header stating %d: %q, %v", stated, got, err)
+		}
+
+		if used := after.TotalAlloc - before.TotalAlloc; used > budget {
+			t.Errorf("a header stating %d over five bytes: %d bytes allocated; budget is %d", stated, used, budget)
+		}
 	}
 }

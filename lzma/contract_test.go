@@ -575,6 +575,96 @@ func TestContractProperties(t *testing.T) {
 	}
 }
 
+// TestContractHeaderDictSize: "a classic header states the smallest size XZ
+// Utils reads that holds it: one of the form 2^n or 2^n+2^(n-1)", the top
+// of the range being internal/dictsize's own test's. Whatever dictionary the
+// writer is given, its header passes the package's own sniff, which is XZ
+// Utils' rule for the field, and the stream reads back.
+func TestContractHeaderDictSize(t *testing.T) {
+	t.Parallel()
+
+	data, ok := corpus(t)["mixed"]
+	if !ok {
+		t.Fatal("no mixed corpus")
+	}
+
+	for dict, want := range map[int]uint32{
+		lzma.MinDictSize:     1 << 12,
+		lzma.MinDictSize + 1: 1<<12 + 1<<11,
+		5000:                 1<<12 + 1<<11,
+		1<<12 + 1<<11:        1<<12 + 1<<11,
+		1<<12 + 1<<11 + 1:    1 << 13,
+		1 << 20:              1 << 20,
+		1<<20 + 1:            1<<20 + 1<<19,
+		1<<24 - 1:            1 << 24,
+	} {
+		stream := classic(t, wcase{opts: []lzma.Option{lzma.WithDictSize(dict)}}, data)
+
+		if got := binary.LittleEndian.Uint32(stream[1:]); got != want {
+			t.Errorf("dictionary %d: the header states %d, want %d", dict, got, want)
+		}
+
+		if !lzma.ValidHeader(stream[:lzma.HeaderLen]) {
+			t.Errorf("dictionary %d: the header does not pass ValidHeader", dict)
+		}
+
+		r, err := lzma.NewReader(bytes.NewReader(stream))
+		if err != nil {
+			t.Fatalf("dictionary %d: %v", dict, err)
+		}
+
+		if got, rerr := io.ReadAll(r); rerr != nil || !bytes.Equal(got, data) {
+			t.Errorf("dictionary %d: %d bytes read back, %v", dict, len(got), rerr)
+		}
+	}
+
+	// The encoder keeps the size it was given: 5500 random bytes written
+	// twice under a dictionary of 5000 cannot have the second copy refer
+	// to the first, 5500 back, and the stream is about both; a dictionary
+	// of the 6144 the header states would halve it.
+	random, ok := corpus(t)["random"]
+	if !ok {
+		t.Fatal("no random corpus")
+	}
+
+	twice := append(bytes.Clone(random[:5500]), random[:5500]...)
+	if stream := classic(t, wcase{opts: []lzma.Option{lzma.WithDictSize(5000)}}, twice); len(stream) < 10000 {
+		t.Errorf("11000 bytes, the second half a copy 5500 back, in %d under a dictionary of 5000", len(stream))
+	}
+
+	// A reader's limit is held against what the header states.
+	stream := classic(t, wcase{opts: []lzma.Option{lzma.WithDictSize(5000)}}, data)
+
+	if _, err := lzma.NewReader(bytes.NewReader(stream), lzma.WithMaxDictSize(5000)); !errors.Is(
+		err, lzma.ErrUnsupported,
+	) {
+		t.Errorf("a limit of 5000 on a header stating 6144: %v, want ErrUnsupported", err)
+	}
+
+	if _, err := lzma.NewReader(bytes.NewReader(stream), lzma.WithMaxDictSize(6144)); err != nil {
+		t.Errorf("a limit of 6144 on a header stating 6144: %v", err)
+	}
+}
+
+// TestContractSizeTheReaderTakes: WithSize is "at most a pebibyte, the
+// largest the reader takes": the writer refuses to declare what its own
+// reader would refuse to read.
+func TestContractSizeTheReaderTakes(t *testing.T) {
+	t.Parallel()
+
+	if _, err := lzma.NewWriter(io.Discard, lzma.WithSize(1<<50)); err != nil {
+		t.Errorf("a pebibyte: %v", err)
+	}
+
+	for _, size := range []int64{1<<50 + 1, 1<<63 - 1} {
+		var out bytes.Buffer
+
+		if _, err := lzma.NewWriter(&out, lzma.WithSize(size)); err == nil || out.Len() != 0 {
+			t.Errorf("size %d: %v, %d bytes written", size, err, out.Len())
+		}
+	}
+}
+
 // TestContractValidHeader: the format sniff accepts the dictionary sizes
 // the reference encoders emit, at 2^10 and up, 2^32-1 included, and an
 // explicit size to 256 GiB; it refuses other sizes and a wrong length.
@@ -870,11 +960,34 @@ func TestContractFlushedChunkIsRead(t *testing.T) {
 }
 
 // TestContractMaxDictSize: a classic header declaring a dictionary above
-// WithMaxDictSize is refused as unsupported; one at the limit is read.
+// WithMaxDictSize is refused as unsupported; one at the limit is read. "The
+// default is no bound below the format's 4 GiB-1": a header stating 2 GiB,
+// or the format's largest, opens with no option, and costs what its five
+// bytes of data do.
 func TestContractMaxDictSize(t *testing.T) {
 	t.Parallel()
 
 	stream := classic(t, wcase{opts: []lzma.Option{lzma.WithDictSize(1 << 20)}}, []byte("hello"))
+
+	for _, stated := range []uint32{1 << 31, 1<<32 - 1} {
+		large := bytes.Clone(stream)
+		binary.LittleEndian.PutUint32(large[1:], stated)
+
+		r, err := lzma.NewReader(bytes.NewReader(large))
+		if err != nil {
+			t.Fatalf("a header stating %d, no option: %v", stated, err)
+		}
+
+		if got, rerr := io.ReadAll(r); rerr != nil || string(got) != "hello" {
+			t.Errorf("a header stating %d: %q, %v", stated, got, rerr)
+		}
+
+		if _, err = lzma.NewReader(bytes.NewReader(large), lzma.WithMaxDictSize(int64(stated)-1)); !errors.Is(
+			err, lzma.ErrUnsupported,
+		) {
+			t.Errorf("a header stating %d under a limit one below: %v, want ErrUnsupported", stated, err)
+		}
+	}
 
 	_, err := lzma.NewReader(bytes.NewReader(stream), lzma.WithMaxDictSize(1<<16))
 	if !errors.Is(err, lzma.ErrUnsupported) {

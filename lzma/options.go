@@ -44,15 +44,19 @@ var (
 	errDictSize     = errors.New("lzma: dictionary size out of range")
 	errMaxDictSize  = errors.New("lzma: dictionary size limit out of range")
 	errNegativeSize = errors.New("lzma: negative size")
+	errSizeTooLarge = errors.New("lzma: size above a pebibyte")
 )
 
 // defaultDictSize is the writers' dictionary when none is asked for.
 const defaultDictSize = 8 << 20
 
 // WithMaxDictSize bounds the dictionary a classic LZMA header may declare:
-// a header asking for more is refused with ErrUnsupported, so a mangled or
-// hostile header cannot drive the allocation. The default is 2 GiB-1.
-// NewReader.
+// a header asking for more is refused with ErrUnsupported. The dictionary is
+// grown on demand and costs what the stream decodes, so the default is no
+// bound below the format's 4 GiB-1; the option is for a reader of untrusted
+// input that wants a smaller one. The limit is held against what the header
+// states, which for a stream of this package's writer is WithDictSize's
+// rounded size. NewReader.
 func WithMaxDictSize(n int64) Option {
 	return Option{"WithMaxDictSize", func(o *options) {
 		o.set |= optMaxDictSize
@@ -62,7 +66,9 @@ func WithMaxDictSize(n int64) Option {
 
 // WithDictSize sets the encoder's dictionary size, MinDictSize to
 // MaxDictSize (default 8 MiB). A larger dictionary finds longer matches at
-// the cost of memory on both sides. NewWriter, NewWriter2.
+// the cost of memory on both sides. A classic header states the smallest
+// size XZ Utils reads that holds it: one of the form 2^n or 2^n+2^(n-1),
+// or 4 GiB-1 above the largest of those. NewWriter, NewWriter2.
 func WithDictSize(n int) Option {
 	return Option{"WithDictSize", func(o *options) {
 		o.set |= optDictSize
@@ -80,11 +86,11 @@ func WithProperties(lc, lp, pb int) Option {
 	}}
 }
 
-// WithSize declares the uncompressed size in the classic LZMA header: Write
-// accepts exactly that many bytes and refuses the rest with
-// ErrSizeExceeded, and the stream carries no end marker unless
-// WithEOSMarker asks for one. Without it the size is unknown and the end
-// marker is written. NewWriter.
+// WithSize declares the uncompressed size in the classic LZMA header, at
+// most a pebibyte (1024^5), the largest the reader takes: Write accepts
+// exactly that many bytes and refuses the rest with ErrSizeExceeded, and
+// the stream carries no end marker unless WithEOSMarker asks for one.
+// Without it the size is unknown and the end marker is written. NewWriter.
 func WithSize(n int64) Option {
 	return Option{"WithSize", func(o *options) {
 		o.set |= optSize
@@ -104,7 +110,7 @@ func WithEOSMarker() Option {
 // apply folds opts into the defaults, refusing any option outside allowed.
 func apply(opts []Option, allowed optionSet, constructor string) (options, error) {
 	o := options{
-		maxDictSize: 1<<31 - 1,
+		maxDictSize: MaxDictSize,
 		dictSize:    defaultDictSize,
 		// What xz uses.
 		props: Properties{LC: 3, LP: 0, PB: 2},
@@ -172,6 +178,11 @@ func (o *options) validate() error {
 
 	if o.set&optSize != 0 && o.size < 0 {
 		return fmt.Errorf("%w: %d", errNegativeSize, o.size)
+	}
+
+	// What the reader refuses to read, the writer does not write.
+	if o.size > maxStreamSize {
+		return fmt.Errorf("%w: %d", errSizeTooLarge, o.size)
 	}
 
 	return nil
