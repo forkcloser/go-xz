@@ -26,6 +26,7 @@ import (
 	"hash"
 	"io"
 	"slices"
+	"sync"
 )
 
 // Reader decodes an xz file: one stream or several, concatenated with or
@@ -50,6 +51,11 @@ type Reader struct {
 	lz lzma2Cache
 	// par decodes in its place when the input allows concurrent decoding.
 	par *parallelReader
+
+	// err is what every Read returns once one has failed or Close was
+	// called. Close may come from another goroutine, hence the lock.
+	mu  sync.Mutex
+	err error
 }
 
 // streamReader decodes a single xz stream.
@@ -150,14 +156,25 @@ func randomAccess(r io.Reader) (*io.SectionReader, error) {
 	return io.NewSectionReader(rs, start, end-start), nil
 }
 
-// Close releases the workers of a reader that decodes concurrently; it is
-// required when such a reader is abandoned before io.EOF, and may be
-// called after. Close may be called from another goroutine, and then
-// cancels a Read waiting on a block. On a reader without workers it does
-// nothing.
+// Close closes the reader: Read and WriteTo then return an error matching
+// ErrClosed, unless the reader had already ended or failed, which it keeps
+// reporting. It releases the workers of a reader that decodes concurrently,
+// and is required when such a reader is abandoned before io.EOF.
+//
+// Close may be called from another goroutine. It then cancels a Read waiting
+// on a block decoded concurrently; a Read in progress on a reader that
+// decodes in order finishes first. Close does not close the underlying
+// reader, and always returns nil.
 func (r *Reader) Close() error {
 	if r.par != nil {
 		return r.par.Close()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.err == nil {
+		r.err = errReaderClosed
 	}
 
 	return nil
@@ -208,12 +225,36 @@ var errUnexpectedData = corruptf("xz: unexpected data after stream")
 // past the point of corruption; discard data received alongside such an error
 // rather than treating it as a correct prefix of the stream.
 //
-//nolint:gocognit // the loop over streams: how a single stream ends and the padding between streams, each commented in place
+// The first error is final: every later Read returns it, io.EOF included.
 func (r *Reader) Read(p []byte) (n int, err error) {
 	if r.par != nil {
 		return r.par.Read(p)
 	}
 
+	r.mu.Lock()
+	err = r.err
+	r.mu.Unlock()
+
+	if err != nil {
+		return 0, err
+	}
+
+	if n, err = r.readStreams(p); err != nil {
+		r.mu.Lock()
+		if r.err == nil {
+			r.err = err
+		}
+		r.mu.Unlock()
+	}
+
+	return n, err
+}
+
+// readStreams is Read on a reader that has not failed: the streams of the
+// file, one after the other.
+//
+//nolint:gocognit // the loop over streams: how a single stream ends and the padding between streams, each commented in place
+func (r *Reader) readStreams(p []byte) (n int, err error) {
 	for n < len(p) {
 		if r.sr == nil {
 			if r.opts.singleStream {

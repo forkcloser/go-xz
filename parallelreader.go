@@ -499,7 +499,7 @@ func indexEOF(err error) error {
 // errReaderClosed is returned by Read after Close has been called. It matches
 // ErrClosed so callers can recognise it without comparing message text.
 var errReaderClosed = &kindError{
-	msg:  "xz: parallel reader is closed",
+	msg:  "xz: reader is closed",
 	kind: ErrClosed,
 }
 
@@ -539,11 +539,9 @@ func (d *parallelDecoder) start(workers int) {
 // the ordered queue (bounded capacity) throttles how many blocks are in
 // flight.
 func (d *parallelDecoder) dispatch() {
-	// Both channels close on every exit path, including the cancelled one:
-	// jobs so the workers finish, and queue so a consumer waiting for the
-	// next block is released rather than left waiting on work that will
-	// never be dispatched.
-	defer close(d.queue)
+	// jobs closes on every exit path, so the workers finish. queue closes
+	// only once every block was handed over: a closed queue is the end of
+	// the stream, and a cancelled reader must never take it for one.
 	defer close(d.jobs)
 
 	for i := range d.blocks {
@@ -563,6 +561,8 @@ func (d *parallelDecoder) dispatch() {
 			return
 		}
 	}
+
+	close(d.queue)
 }
 
 // workerScratch is the per-worker reusable decode machinery: the buffered
