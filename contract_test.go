@@ -728,6 +728,143 @@ func TestContractReaderEndIsFinal(t *testing.T) {
 	}
 }
 
+// TestContractReaderClose: "Close closes the reader: Read and WriteTo then
+// return an error matching ErrClosed, unless the reader had already ended
+// or failed, which it keeps reporting", whatever the input and the workers;
+// and Close returns nil, a second time too.
+func TestContractReaderClose(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, data, 1000))
+	cut := file[:len(file)-20]
+
+	for name, open := range readers() {
+		t.Run(name+", closed before the end", func(t *testing.T) {
+			t.Parallel()
+
+			r, err := open(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err = io.ReadFull(r, make([]byte, 1500)); err != nil {
+				t.Fatal(err)
+			}
+
+			for range 2 {
+				if cerr := r.Close(); cerr != nil {
+					t.Fatalf("Close: %v", cerr)
+				}
+			}
+
+			if n, rerr := r.Read(make([]byte, 100)); n != 0 || !errors.Is(rerr, xz.ErrClosed) {
+				t.Errorf("Read after Close: %d bytes, %v", n, rerr)
+			}
+
+			if n, werr := r.WriteTo(io.Discard); n != 0 || !errors.Is(werr, xz.ErrClosed) {
+				t.Errorf("WriteTo after Close: %d bytes, %v", n, werr)
+			}
+		})
+
+		t.Run(name+", closed at the end", func(t *testing.T) {
+			t.Parallel()
+
+			r, err := open(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err = io.ReadAll(r); err != nil {
+				t.Fatal(err)
+			}
+
+			if cerr := r.Close(); cerr != nil {
+				t.Fatalf("Close: %v", cerr)
+			}
+
+			//nolint:errorlint // io.EOF itself: callers compare it with ==
+			if n, rerr := r.Read(make([]byte, 100)); n != 0 || rerr != io.EOF {
+				t.Errorf("Read after the end and Close: %d bytes, %v", n, rerr)
+			}
+		})
+
+		t.Run(name+", closed after a failure", func(t *testing.T) {
+			t.Parallel()
+
+			r, err := open(cut)
+			if err != nil {
+				// The file is refused when it is opened: no reader to close.
+				return
+			}
+
+			_, first := io.ReadAll(r)
+			if first == nil {
+				t.Fatal("a file cut short was read to its end")
+			}
+
+			if cerr := r.Close(); cerr != nil {
+				t.Fatalf("Close: %v", cerr)
+			}
+
+			//nolint:errorlint // the same error, not one like it
+			if n, rerr := r.Read(make([]byte, 100)); n != 0 || rerr != first {
+				t.Errorf("Read after %q and Close: %d bytes, %v", first, n, rerr)
+			}
+		})
+	}
+}
+
+// closingInput serves the first half of a file, then closes the reader that
+// reads it, from inside its own Read, and fails.
+type closingInput struct {
+	file []byte
+	pos  int
+	r    *xz.Reader
+}
+
+var errInputGone = errors.New("the input is gone")
+
+func (in *closingInput) Read(p []byte) (int, error) {
+	if in.pos >= len(in.file)/2 {
+		_ = in.r.Close()
+
+		return 0, errInputGone
+	}
+
+	n := copy(p, in.file[in.pos:len(in.file)/2])
+	in.pos += n
+
+	return n, nil
+}
+
+// TestContractReaderCloseDuringRead: a Close that comes while a Read is at
+// work is the reader's first error, whatever that Read then meets: the Read
+// returns what it met, the input's own error, and every later one matches
+// ErrClosed.
+func TestContractReaderCloseDuringRead(t *testing.T) {
+	t.Parallel()
+
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, cData(5000), 1000))
+	in := &closingInput{file: file}
+
+	r, err := xz.NewReader(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	in.r = r
+
+	//nolint:errorlint // the input's error, untouched
+	if _, rerr := io.ReadAll(r); rerr != errInputGone {
+		t.Fatalf("the Read the input failed under: %v, want the input's error", rerr)
+	}
+
+	if n, rerr := r.Read(make([]byte, 100)); n != 0 || !errors.Is(rerr, xz.ErrClosed) {
+		t.Errorf("the next Read: %d bytes, %v, want an error matching ErrClosed", n, rerr)
+	}
+}
+
 // closingWriter closes the reader from another goroutine during its first
 // Write, waits for that Close to return, and goes on accepting.
 type closingWriter struct {

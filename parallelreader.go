@@ -494,7 +494,7 @@ func indexEOF(err error) error {
 // errReaderClosed is returned by Read after Close has been called. It matches
 // ErrClosed so callers can recognise it without comparing message text.
 var errReaderClosed = &kindError{
-	msg:  "xz: parallel reader is closed",
+	msg:  "xz: reader is closed",
 	kind: ErrClosed,
 }
 

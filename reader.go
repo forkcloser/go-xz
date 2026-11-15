@@ -25,6 +25,7 @@ import (
 	"hash"
 	"io"
 	"slices"
+	"sync"
 )
 
 // Reader decodes an xz file: one stream or several, concatenated with or
@@ -46,7 +47,9 @@ type Reader struct {
 	// par decodes in its place when the input allows concurrent decoding.
 	par *parallelReader
 
-	// err is what every Read returns once one has failed or ended.
+	// err is what every Read returns once one has failed or Close was
+	// called. Close may come from another goroutine, hence the lock.
+	mu  sync.Mutex
 	err error
 }
 
@@ -131,14 +134,25 @@ func randomAccess(r io.Reader) (*io.SectionReader, bool) {
 	return io.NewSectionReader(rs, start, end-start), true
 }
 
-// Close releases the workers of a reader that decodes concurrently; it is
-// required when such a reader is abandoned before io.EOF, and may be
-// called after. Close may be called from another goroutine, and then
-// cancels a Read waiting on a block. On a reader without workers it does
-// nothing.
+// Close closes the reader: Read and WriteTo then return an error matching
+// ErrClosed, unless the reader had already ended or failed, which it keeps
+// reporting. It releases the workers of a reader that decodes concurrently,
+// and is required when such a reader is abandoned before io.EOF.
+//
+// Close may be called from another goroutine. It then cancels a Read waiting
+// on a block decoded concurrently; a Read in progress on a reader that
+// decodes in order finishes first. Close does not close the underlying
+// reader, and always returns nil.
 func (r *Reader) Close() error {
 	if r.par != nil {
 		return r.par.Close()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.err == nil {
+		r.err = errReaderClosed
 	}
 
 	return nil
@@ -195,13 +209,23 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 		return r.par.Read(p)
 	}
 
-	if r.err != nil {
-		return 0, r.err
+	r.mu.Lock()
+	err = r.err
+	r.mu.Unlock()
+
+	if err != nil {
+		return 0, err
 	}
 
-	n, r.err = r.readStreams(p)
+	if n, err = r.readStreams(p); err != nil {
+		r.mu.Lock()
+		if r.err == nil {
+			r.err = err
+		}
+		r.mu.Unlock()
+	}
 
-	return n, r.err
+	return n, err
 }
 
 // readStreams is Read on a reader that has not failed: the streams of the

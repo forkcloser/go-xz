@@ -27,7 +27,8 @@ var (
 	// does not match.
 	ErrCorrupt = errors.New("xz: corrupt input")
 
-	// ErrClosed reports that a reader or writer was used after Close.
+	// ErrClosed reports that a reader or writer was used after Close. A
+	// reader that had already ended or failed keeps reporting that.
 	ErrClosed = errors.New("xz: already closed")
 
 	// ErrUnsupported reports a stream this package cannot decode even though
