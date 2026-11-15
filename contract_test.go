@@ -1103,6 +1103,56 @@ func TestContractSourceErrors(t *testing.T) {
 	}
 }
 
+// TestContractEndOfInputWrapped: "input ending inside a stream, with io.EOF
+// or an error wrapping it, is io.ErrUnexpectedEOF", wherever it ends: in a
+// stream header, a block, an index, a footer, or in the first bytes of a
+// later stream; and an input ending between streams, or inside the padding
+// there, says the same with either. Each file is cut at every byte and
+// read twice, from a source ending with io.EOF and from one ending with an
+// error that wraps it; both readings end the same way.
+func TestContractEndOfInputWrapped(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+	o := refOptions{check: flagCRC64, dictCode: 20}
+	first := refStream(o, refBlocks(t, data[:500], 0))
+	second := refStream(o, refBlocks(t, data[500:], 700))
+
+	// kind is how a reading ended: whole, cut short, corrupt, or otherwise.
+	kind := func(file []byte, n int, end error) string {
+		r, err := xz.NewReader(&failing{file: file, n: n, err: end})
+		if err == nil {
+			_, err = io.ReadAll(r)
+		}
+
+		switch {
+		case err == nil:
+			return "whole"
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return "cut short"
+		case errors.Is(err, xz.ErrCorrupt):
+			return "corrupt"
+		default:
+			return err.Error()
+		}
+	}
+
+	wrapped := fmt.Errorf("gone: %w", io.EOF)
+
+	for name, file := range map[string][]byte{
+		"one block":                           first,
+		"several blocks":                      second,
+		"two streams and the padding between": slices.Concat(first, make([]byte, 4), second),
+	} {
+		for n := range file {
+			if plain, wrap := kind(file, n, io.EOF), kind(file, n, wrapped); plain != wrap {
+				t.Errorf("%s, cut at %d of %d: %q with io.EOF, %q with an error wrapping it",
+					name, n, len(file), plain, wrap)
+			}
+		}
+	}
+}
+
 // TestContractDictSizeStated: "every block header states the size, rounded
 // up to the next one the format has a code for: a power of two, or one and
 // a half times one". The code is the fifth byte of a block header whose
