@@ -18,6 +18,7 @@ test: xz-utils
     export XZ_UTILS_REQUIRED=1
     just do test go unit
     just do test go race
+    just do test go cover
     just test-upstreamdiff
 
 # The XZ Utils binary the interop tests hold the package to, from the archive
