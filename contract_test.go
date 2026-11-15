@@ -77,19 +77,20 @@ func lzma2Of(tb testing.TB, data []byte) []byte {
 	return buf.Bytes()
 }
 
-// refBlocks cuts data into blocks of at most size bytes.
+// refBlocks cuts data into blocks of at most size bytes, one empty block
+// for no data; a size of zero is one block holding all of it.
 func refBlocks(tb testing.TB, data []byte, size int) []refBlock {
 	tb.Helper()
+
+	if size <= 0 {
+		return []refBlock{{data: data, lzma2: lzma2Of(tb, data)}}
+	}
 
 	var blocks []refBlock
 
 	for pos := 0; pos < len(data) || len(blocks) == 0; pos += size {
 		end := min(pos+size, len(data))
 		blocks = append(blocks, refBlock{data: data[pos:end], lzma2: lzma2Of(tb, data[pos:end])})
-
-		if size <= 0 {
-			break
-		}
 	}
 
 	return blocks
