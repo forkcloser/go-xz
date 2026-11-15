@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"runtime"
+	"sync/atomic"
 	"testing"
 
 	"github.com/forkcloser/xz/v2"
@@ -345,11 +346,14 @@ func TestBoundedReaderDictionaryAcrossBlocks(t *testing.T) {
 	}
 }
 
-// meter is a file that counts the Read calls made of it.
+// meter is a file that counts what is asked of it: the Read calls of a
+// reader in order, the bytes a reader with workers fetches by offset.
 type meter struct {
 	*bytes.Reader
 
 	reads int
+	// ReadAt is called from every worker.
+	fetches, fetched atomic.Int64
 }
 
 func (m *meter) Read(p []byte) (int, error) {
@@ -358,7 +362,16 @@ func (m *meter) Read(p []byte) (int, error) {
 	return m.Reader.Read(p)
 }
 
-// inOrder hides everything of the meter but Read.
+func (m *meter) ReadAt(p []byte, off int64) (int, error) {
+	n, err := m.Reader.ReadAt(p, off)
+	m.fetches.Add(1)
+	m.fetched.Add(int64(n))
+
+	return n, err
+}
+
+// inOrder hides everything of the meter but Read, so a reader with or
+// without workers reads it in order.
 type inOrder struct{ m *meter }
 
 func (o inOrder) Read(p []byte) (int, error) { return o.m.Read(p) }
@@ -366,9 +379,11 @@ func (o inOrder) Read(p []byte) (int, error) { return o.m.Read(p) }
 // TestBoundedReadCost: opening and reading a file costs in proportion to
 // the file. Stream padding is legal at any length and a stream may be
 // empty, so a megabyte of padding and twenty thousand empty streams are
-// both valid files a few bytes describe. Read in order, either is at most
-// a Read call a kilobyte, where padding was one for every four bytes and an
-// empty stream seven.
+// both valid files a few bytes describe. Read in order, the padding is at
+// most a Read call a kilobyte, where it was one for every four bytes; with
+// workers, what is fetched by offset is within four times the file, where
+// a buffer's worth was fetched for every stream, a thousand times the file,
+// and the padding is found in a fetch a kilobyte at most, not one a group.
 func TestBoundedReadCost(t *testing.T) {
 	t.Parallel()
 
@@ -385,12 +400,13 @@ func TestBoundedReadCost(t *testing.T) {
 	streams := bytes.Repeat(empty, 20000)
 
 	for _, tc := range []struct {
-		name string
-		file []byte
-		want []byte
+		name    string
+		file    []byte
+		want    []byte
+		streams int
 	}{
-		{"a megabyte of padding, twice", padded, data},
-		{"twenty thousand empty streams", streams, nil},
+		{"a megabyte of padding, twice", padded, data, 2},
+		{"twenty thousand empty streams", streams, nil, 20000},
 	} {
 		t.Run(tc.name+", in order", func(t *testing.T) {
 			t.Parallel()
@@ -408,6 +424,39 @@ func TestBoundedReadCost(t *testing.T) {
 
 			if limit := len(tc.file)/1024 + 16; m.reads > limit {
 				t.Errorf("%d Read calls for a file of %d bytes, want at most %d", m.reads, len(tc.file), limit)
+			}
+		})
+
+		t.Run(tc.name+", with workers", func(t *testing.T) {
+			t.Parallel()
+
+			m := &meter{Reader: bytes.NewReader(tc.file)}
+
+			r, err := xz.NewReader(m, xz.WithWorkers(4))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Opening is where the streams and the padding between them
+			// are found; a stream of its own costs a few fetches.
+			if limit := int64(len(tc.file)/1024 + 64 + 8*tc.streams); m.fetches.Load() > limit {
+				t.Errorf(
+					"%d fetches to open a file of %d bytes, want at most %d",
+					m.fetches.Load(), len(tc.file), limit,
+				)
+			}
+
+			got, rerr := io.ReadAll(r)
+			if rerr != nil || !bytes.Equal(got, tc.want) {
+				t.Fatalf("%d bytes, %v", len(got), rerr)
+			}
+
+			if cerr := r.Close(); cerr != nil {
+				t.Fatal(cerr)
+			}
+
+			if limit := 4 * int64(len(tc.file)); m.fetched.Load() > limit {
+				t.Errorf("%d bytes fetched for a file of %d, want at most %d", m.fetched.Load(), len(tc.file), limit)
 			}
 		})
 	}
