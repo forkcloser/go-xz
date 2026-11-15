@@ -12,7 +12,10 @@ package xz_test
 
 import (
 	"bytes"
+	"hash/crc32"
 	"io"
+	"math/rand/v2"
+	"runtime"
 	"testing"
 
 	"github.com/forkcloser/xz/v2"
@@ -244,5 +247,68 @@ func TestBoundedWriterSizes(t *testing.T) {
 				t.Fatalf("len %d: the reference: %d bytes, %v", n, len(got), err)
 			}
 		}
+	}
+}
+
+// TestBoundedReaderDictionaryAcrossBlocks: every block of a file starts a
+// dictionary of its own, and the reader that decodes them one after the
+// other holds what one block needs, not what they add up to. 64 blocks of
+// 256 KiB under a dictionary size of 64 MiB decode within 4 MiB of
+// allocations: before the dictionary restarted its buffer at each block,
+// the same file cost 33 MiB, the buffer doubling toward the file's 16.
+//
+//nolint:paralleltest // measures the process's TotalAlloc against a budget; a parallel test's allocations would count against it
+func TestBoundedReaderDictionaryAcrossBlocks(t *testing.T) {
+	const (
+		blocks    = 64
+		blockSize = 256 << 10
+		budget    = 4 << 20
+	)
+
+	data := make([]byte, blocks*blockSize)
+
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range data {
+		data[i] = byte(rng.IntN(256))
+	}
+
+	var file bytes.Buffer
+
+	w, err := xz.NewWriter(&file, xz.WithDictSize(64<<20), xz.WithBlockSize(blockSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after runtime.MemStats
+
+	//revive:disable-next-line:call-to-gc the allocation budget is measured from a collected heap
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	r, err := xz.NewReader(bytes.NewReader(file.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sum := crc32.NewIEEE()
+
+	n, err := io.Copy(sum, r)
+
+	runtime.ReadMemStats(&after)
+
+	if err != nil || n != int64(len(data)) || sum.Sum32() != crc32.ChecksumIEEE(data) {
+		t.Fatalf("decoded %d bytes, %v; want the %d written", n, err, len(data))
+	}
+
+	if used := after.TotalAlloc - before.TotalAlloc; used > budget {
+		t.Errorf("decoding %d blocks of %d bytes allocated %d bytes; budget is %d", blocks, blockSize, used, budget)
 	}
 }
