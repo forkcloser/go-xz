@@ -11,10 +11,9 @@ import (
 
 // What Properties.verify refuses.
 var (
-	errPropertiesNil = errors.New("lzma: properties are nil")
-	errLC            = errors.New("lzma: lc out of range")
-	errLP            = errors.New("lzma: lp out of range")
-	errPB            = errors.New("lzma: pb out of range")
+	errLC = errors.New("lzma: lc out of range")
+	errLP = errors.New("lzma: lp out of range")
+	errPB = errors.New("lzma: pb out of range")
 )
 
 // maximum and minimum values for the LZMA properties.
@@ -39,16 +38,14 @@ const maxLCLP = 4
 // Properties contains the parameters LC, LP and PB. The parameter LC
 // defines the number of literal context bits; parameter LP the number
 // of literal position bits and PB the number of position bits.
-//
-//nolint:recvcheck // verify takes the pointer, as a nil *Properties is the unset state it rejects
 type Properties struct {
 	LC int
 	LP int
 	PB int
 }
 
-// String returns the properties in a string representation.
-func (p *Properties) String() string {
+// String returns the properties as "LC 3 LP 0 PB 2".
+func (p Properties) String() string {
 	return fmt.Sprintf("LC %d LP %d PB %d", p.LC, p.LP, p.PB)
 }
 
@@ -79,11 +76,7 @@ func (p Properties) Code() byte {
 }
 
 // verify checks the properties for correctness.
-func (p *Properties) verify() error {
-	if p == nil {
-		return errPropertiesNil
-	}
-
+func (p Properties) verify() error {
 	if !(minLC <= p.LC && p.LC <= maxLC) {
 		return errLC
 	}

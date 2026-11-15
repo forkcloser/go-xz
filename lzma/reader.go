@@ -141,11 +141,11 @@ func NewReader(lzma io.Reader, opts ...Option) (r *Reader, err error) {
 	return r, nil
 }
 
-// Header returns the header as read from the LZMA stream. It is intended to
-// allow the user to understand what parameters are typically provided in the
-// headers of the LZMA files and choose a WithMaxDictSize accordingly.
-func (r *Reader) Header() (h Header, ok bool) {
-	return r.headerOrig, r.d != nil
+// Header returns the header as read from the LZMA stream: what a file
+// declares, for a caller that chooses a WithMaxDictSize by the files it
+// meets.
+func (r *Reader) Header() Header {
+	return r.headerOrig
 }
 
 // Read returns uncompressed data.

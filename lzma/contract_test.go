@@ -23,8 +23,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
+	"strings"
 	"testing"
 	"time"
 
@@ -699,6 +701,27 @@ func TestContractWriter2HoldsItsWriterToItsCount(t *testing.T) {
 		if calls < 5 {
 			t.Errorf("the sequence went out in %d writes, too few to say anything", calls)
 		}
+	}
+}
+
+// TestContractPropertiesPrint: Properties print as "LC 3 LP 0 PB 2", as a
+// value and inside a Header, which is how a caller that logs what Header
+// returned sees them.
+func TestContractPropertiesPrint(t *testing.T) {
+	t.Parallel()
+
+	p := lzma.Properties{LC: 3, LP: 0, PB: 2}
+	if got := fmt.Sprint(p); got != "LC 3 LP 0 PB 2" {
+		t.Errorf("a value prints as %q", got)
+	}
+
+	r, err := lzma.NewReader(bytes.NewReader(classic(t, wcase{}, []byte("hello"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := fmt.Sprintf("%v", r.Header()); !strings.Contains(got, "LC 3 LP 0 PB 2") {
+		t.Errorf("a header prints as %q", got)
 	}
 }
 
