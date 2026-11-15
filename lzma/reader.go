@@ -28,7 +28,11 @@ import (
 // of that:
 //   - The dictionary is allocated as the data needs it, never the declared
 //     size up front, and no larger than the stream's own size when the
-//     header states one.
+//     header states one. It grows by doubling, and holds the buffer it
+//     leaves beside the one it moves to while it does, which the collector
+//     does not free at once: a process reading a stream that fills its
+//     dictionary was measured at up to two and a half times the
+//     dictionary's size resident.
 //   - WithMaxDictSize is a limit on the dictionary size a header may declare;
 //     a header asking for more is refused with ErrUnsupported. The default
 //     is the format's 4 GiB-1.

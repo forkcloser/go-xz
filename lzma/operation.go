@@ -10,9 +10,8 @@ import (
 )
 
 // operation represents an operation on the dictionary during encoding or
-// decoding. It is a value type so that decoding and encoding the LZMA
-// stream do not allocate a boxed interface value per operation, which
-// dominated both the compression and decompression hot paths.
+// decoding. It is a value type, so that neither allocates a boxed interface
+// value for each operation.
 //
 // An operation is either a single-byte literal (literal == true) or a
 // match at the given distance and length.

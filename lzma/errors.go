@@ -12,12 +12,18 @@ import (
 // Sentinel errors that callers can test for with errors.Is.
 //
 // The decoders read untrusted input, and the distinction that matters to a
-// caller is between a stream that is not valid LZMA or LZMA2 and a transport
+// caller is between a stream that is not valid LZMA or LZMA2 and a source
 // that failed underneath the decoder: the first means reject the input, the
-// second means the read may be worth retrying. An I/O error from the
-// underlying reader is passed through untouched and matches neither
-// sentinel; running out of input inside a stream is reported as
-// io.ErrUnexpectedEOF.
+// second says nothing about it. An I/O error from the underlying reader
+// matches neither sentinel and is returned as it is, with one exception:
+// input that ends inside a stream, with io.EOF or an error wrapping it, is
+// reported as io.ErrUnexpectedEOF. A reader keeps what it failed with:
+// every later Read returns it.
+//
+// What a caller's own mistake earns matches neither sentinel: an option out
+// of the format's range, a write after Close. Properties the format allows
+// and this package does not, lc and lp summing above four, are
+// ErrUnsupported in an option as in a header.
 var (
 	// ErrCorrupt reports that the data being decoded is not a valid LZMA or
 	// LZMA2 stream: an invalid header or chunk header, a match that reaches

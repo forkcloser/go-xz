@@ -7,7 +7,9 @@ package lzma_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/forkcloser/xz/v2/lzma"
@@ -81,6 +83,232 @@ func TestEdgeReaderErrorIsFinal(t *testing.T) {
 	for i := range 2 {
 		if n, err := r.Read(p); n != 0 || !errors.Is(err, io.ErrUnexpectedEOF) {
 			t.Fatalf("Read %d after the error: %d bytes, %v; want 0 and the same error", i+2, n, err)
+		}
+	}
+}
+
+// failAfter serves n bytes of data, then fails with err.
+type failAfter struct {
+	data []byte
+	n    int
+	err  error
+}
+
+func (f *failAfter) Read(p []byte) (int, error) {
+	if f.n == 0 {
+		return 0, f.err
+	}
+
+	k := copy(p[:min(len(p), f.n)], f.data)
+	f.data, f.n = f.data[k:], f.n-k
+
+	return k, nil
+}
+
+// TestEdgeSourceErrors: an error of the source comes back as it is and
+// matches neither sentinel; an end of input inside a stream, io.EOF or an
+// error wrapping it, is io.ErrUnexpectedEOF; and either reader returns what
+// it failed with on every later Read.
+func TestEdgeSourceErrors(t *testing.T) {
+	t.Parallel()
+
+	data := bytes.Repeat([]byte("the quick brown fox "), 400)
+	errSource := errors.New("source failed")
+
+	readers := map[string]struct {
+		stream []byte
+		open   func(io.Reader) (io.Reader, error)
+	}{
+		"classic": {classicStream(t, data), func(in io.Reader) (io.Reader, error) { return lzma.NewReader(in) }},
+		"lzma2":   {lzma2Stream(t, data), func(in io.Reader) (io.Reader, error) { return lzma.NewReader2(in, 8<<20) }},
+	}
+
+	// asItIs is a cause the reader is to return itself, not only its kind.
+	causes := map[string]struct {
+		cause, want error
+		asItIs      bool
+	}{
+		"an error":            {errSource, errSource, true},
+		"a wrapped error":     {fmt.Errorf("read: %w", errSource), errSource, true},
+		"io.EOF":              {io.EOF, io.ErrUnexpectedEOF, false},
+		"wrapping io.EOF":     {fmt.Errorf("gone: %w", io.EOF), io.ErrUnexpectedEOF, false},
+		"io.ErrUnexpectedEOF": {io.ErrUnexpectedEOF, io.ErrUnexpectedEOF, true},
+	}
+
+	for name, rd := range readers {
+		for what, c := range causes {
+			r, err := rd.open(&failAfter{data: rd.stream, n: len(rd.stream) / 2, err: c.cause})
+			if err != nil {
+				t.Fatalf("%s, %s: opening: %v", name, what, err)
+			}
+
+			_, err = io.ReadAll(r)
+			if !errors.Is(err, c.want) || errors.Is(err, lzma.ErrCorrupt) || errors.Is(err, lzma.ErrUnsupported) {
+				t.Errorf("%s, %s: %v; want %v and neither sentinel", name, what, err, c.want)
+			}
+
+			if c.asItIs && !errors.Is(err, c.cause) {
+				t.Errorf("%s, %s: %v; want the source's own error", name, what, err)
+			}
+
+			for i := range 2 {
+				if n, again := r.Read(make([]byte, 16)); n != 0 || !errors.Is(again, c.want) {
+					t.Errorf("%s, %s: Read %d after the error: %d bytes, %v; want 0 and the same error",
+						name, what, i+2, n, again)
+				}
+			}
+		}
+	}
+}
+
+// TestEdgeEndOfInputWrapped: input that ends "with io.EOF or an error
+// wrapping it" says the same of a stream wherever it ends: in the header,
+// in a chunk header, in the data, or at the end of a sized stream that
+// carries a marker. Each stream is cut at every byte and read twice, from a
+// source ending with io.EOF and from one ending with an error that wraps
+// it; both readings end the same way.
+func TestEdgeEndOfInputWrapped(t *testing.T) {
+	t.Parallel()
+
+	text := []byte("the quick brown fox jumps over the lazy dog")
+
+	// Bytes no encoder shortens, so the LZMA2 writer stores them.
+	rng := rand.New(rand.NewPCG(3, 5))
+	random := make([]byte, 3000)
+
+	for i := range random {
+		random[i] = byte(rng.Uint32())
+	}
+
+	classicWith := func(opts ...lzma.Option) []byte {
+		return classic(t, wcase{opts: opts}, text)
+	}
+
+	open2 := func(in io.Reader) (io.Reader, error) { return lzma.NewReader2(in, 8<<20) }
+	open1 := func(in io.Reader) (io.Reader, error) { return lzma.NewReader(in) }
+
+	// kind is how a reading ended: whole, cut short, corrupt, or otherwise.
+	kind := func(open func(io.Reader) (io.Reader, error), stream []byte, n int, end error) string {
+		r, err := open(&failAfter{data: stream, n: n, err: end})
+		if err == nil {
+			_, err = io.ReadAll(r)
+		}
+
+		switch {
+		case err == nil:
+			return "whole"
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return "cut short"
+		case errors.Is(err, lzma.ErrCorrupt):
+			return "corrupt"
+		default:
+			return err.Error()
+		}
+	}
+
+	wrapped := fmt.Errorf("gone: %w", io.EOF)
+
+	for name, tc := range map[string]struct {
+		stream []byte
+		open   func(io.Reader) (io.Reader, error)
+	}{
+		"classic, a marker":            {classicWith(), open1},
+		"classic, a size":              {classicWith(lzma.WithSize(int64(len(text)))), open1},
+		"classic, a size and a marker": {classicWith(lzma.WithSize(int64(len(text))), lzma.WithEOSMarker()), open1},
+		"lzma2, compressed chunks":     {lzma2Stream(t, text), open2},
+		"lzma2, uncompressed chunks":   {lzma2Stream(t, random), open2},
+	} {
+		for n := range len(tc.stream) {
+			plain, wrap := kind(tc.open, tc.stream, n, io.EOF), kind(tc.open, tc.stream, n, wrapped)
+			if plain != wrap {
+				t.Errorf("%s, cut at %d of %d: %q with io.EOF, %q with an error wrapping it",
+					name, n, len(tc.stream), plain, wrap)
+			}
+		}
+	}
+}
+
+// TestEdgeCallerErrorsMatchNoSentinel: what a caller's own mistake earns, an
+// option out of the format's range or a write after Close, is an error that
+// matches neither ErrCorrupt nor ErrUnsupported; properties the format
+// allows and the package does not are ErrUnsupported in an option too.
+func TestEdgeCallerErrorsMatchNoSentinel(t *testing.T) {
+	t.Parallel()
+
+	closed := func(w io.WriteCloser, err error) error {
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err = w.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = w.Write([]byte("x"))
+
+		return err
+	}
+
+	_, errDict := lzma.NewWriter(io.Discard, lzma.WithDictSize(lzma.MinDictSize-1))
+	_, errDict2 := lzma.NewWriter2(io.Discard, lzma.WithDictSize(lzma.MinDictSize-1))
+	_, errProps := lzma.NewWriter(io.Discard, lzma.WithProperties(9, 0, 0))
+	_, errSum := lzma.NewWriter(io.Discard, lzma.WithProperties(3, 2, 0))
+	_, errSize := lzma.NewWriter(io.Discard, lzma.WithSize(-1))
+	_, errLimit := lzma.NewReader(bytes.NewReader(nil), lzma.WithMaxDictSize(lzma.MinDictSize-1))
+	_, errReader2 := lzma.NewReader2(bytes.NewReader(nil), lzma.MinDictSize-1)
+
+	for name, err := range map[string]error{
+		"WithDictSize below the minimum, Writer":   errDict,
+		"WithDictSize below the minimum, Writer2":  errDict2,
+		"WithProperties, lc out of range":          errProps,
+		"WithSize, negative":                       errSize,
+		"WithMaxDictSize below the minimum":        errLimit,
+		"NewReader2, dictionary below the minimum": errReader2,
+		"Write after Close, Writer":                closed(lzma.NewWriter(io.Discard)),
+		"Write after Close, Writer2":               closed(lzma.NewWriter2(io.Discard)),
+	} {
+		if err == nil || errors.Is(err, lzma.ErrCorrupt) || errors.Is(err, lzma.ErrUnsupported) {
+			t.Errorf("%s: %v; want an error that matches neither sentinel", name, err)
+		}
+	}
+
+	if !errors.Is(errSum, lzma.ErrUnsupported) {
+		t.Errorf("WithProperties, lc+lp above four: %v; want ErrUnsupported", errSum)
+	}
+}
+
+// TestEdgeReader2ResetForgets: Reset forgets the error the reader held and
+// the end of the sequence it read: the next sequence reads as on a new
+// reader, and EOS reports false until its own end.
+func TestEdgeReader2ResetForgets(t *testing.T) {
+	t.Parallel()
+
+	data := bytes.Repeat([]byte("B"), 10)
+	sequence := lzma2Stream(t, data)
+
+	r, err := lzma.NewReader2(bytes.NewReader(sequence[:len(sequence)-2]), 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = io.ReadAll(r); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("cut sequence: %v; want io.ErrUnexpectedEOF", err)
+	}
+
+	for range 2 {
+		r.Reset(bytes.NewReader(sequence))
+
+		if r.EOS() {
+			t.Fatal("EOS reports true before the sequence is read")
+		}
+
+		got, err := io.ReadAll(r)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("after Reset: %q, %v; want the sequence and no error", got, err)
+		}
+
+		if !r.EOS() {
+			t.Fatal("EOS reports false at the end of the sequence")
 		}
 	}
 }

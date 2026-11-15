@@ -73,11 +73,11 @@ const maxInt = int(^uint(0) >> 1)
 // Reset clears the dictionary. What is buffered can still be read.
 //
 // A buffer that has not reached dictCap has never wrapped, and grows when a
-// write would pass its end: left where it was, the next dictionary would
-// write on from the last one's end, and a file of small blocks grew the
-// buffer to dictCap block after block, each needing a fraction of it. So
-// what is unread moves to the start, and the next dictionary has the whole
-// of what the buffer already holds before it grows.
+// write would pass its end. What is unread moves to its start, so that the
+// next dictionary has the whole of what the buffer already holds before it
+// grows: written on from the last one's end, a file of small blocks would
+// grow the buffer to dictCap block after block, each needing a fraction of
+// it.
 func (d *decoderDict) Reset() {
 	d.head = 0
 
@@ -250,8 +250,7 @@ func (d *decoderDict) pos() int64 { return d.head }
 
 // grow enlarges the dictionary so that n more bytes fit without wrapping the
 // buffer, up to the capacity the stream declared. Reaching that capacity ends
-// growth for good: from then on the buffer wraps and recycles, exactly as an
-// eagerly allocated dictionary always did.
+// growth for good: from then on the buffer wraps and recycles.
 //
 // Because growth happens before the buffer would first wrap, buf.grow's
 // precondition holds and no index has to be rewritten.

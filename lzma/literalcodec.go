@@ -180,7 +180,7 @@ const (
 	maxLC = 8
 )
 
-// minLC and maxLC define the range for LP values.
+// minLP and maxLP define the range for LP values.
 const (
 	minLP = 0
 	maxLP = 4
