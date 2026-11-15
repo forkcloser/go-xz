@@ -11,6 +11,8 @@ import (
 	"io"
 	"math"
 	"slices"
+
+	"github.com/forkcloser/xz/v2/internal/fullwrite"
 )
 
 // Filter lists the writer refuses, and a size it cannot count.
@@ -118,6 +120,9 @@ func NewWriter(xz io.Writer, opts ...Option) (w *Writer, err error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// The stream goes out in many writes, each counted on.
+	xz = fullwrite.Writer{W: xz}
 
 	w = &Writer{
 		opts:  o,

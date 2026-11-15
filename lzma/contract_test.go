@@ -461,6 +461,87 @@ func TestContractLZMA2Malformed(t *testing.T) {
 	}
 }
 
+// miscounter is a writer whose nth Write breaks io.Writer's contract with
+// no error, or the first one after it that is given anything: by delta
+// below zero it takes that many bytes fewer than it was given and says so,
+// above zero it takes them all and reports more.
+type miscounter struct {
+	calls, at, delta int
+	hit              bool
+}
+
+func (m *miscounter) Write(p []byte) (int, error) {
+	m.calls++
+	// An empty write has no count to get wrong.
+	if m.calls >= m.at && !m.hit && len(p) > 0 {
+		m.hit = true
+
+		return len(p) + m.delta, nil
+	}
+
+	return len(p), nil
+}
+
+// TestContractWriter2HoldsItsWriterToItsCount: a chunk sequence goes out as
+// headers and chunks, each a write counted on. An underlying writer that
+// takes less than it was given without an error, at any one of its calls,
+// is io.ErrShortWrite from the Write, Flush or Close that meets it, a
+// chunk header as much as a chunk. One that reports more than it was given
+// is an error, not a panic.
+func TestContractWriter2HoldsItsWriterToItsCount(t *testing.T) {
+	t.Parallel()
+
+	data := corpus(t)["random"]
+	if len(data) == 0 {
+		t.Fatal("no random corpus")
+	}
+
+	for _, delta := range []int{-1, 3} {
+		var calls int
+
+		for at := 1; ; at++ {
+			m := &miscounter{at: at, delta: delta}
+
+			err := func() error {
+				w, err := lzma.NewWriter2(m, lzma.WithDictSize(lzma.MinDictSize))
+				if err != nil {
+					return err
+				}
+
+				for _, piece := range [][]byte{data[:len(data)/2], data[len(data)/2:]} {
+					if _, err = w.Write(piece); err != nil {
+						return err
+					}
+
+					if err = w.Flush(); err != nil {
+						return err
+					}
+				}
+
+				return w.Close()
+			}()
+
+			if !m.hit {
+				calls = at - 1
+
+				break
+			}
+
+			if delta < 0 && !errors.Is(err, io.ErrShortWrite) {
+				t.Errorf("call %d a byte short: %v, want io.ErrShortWrite", at, err)
+			}
+
+			if delta > 0 && err == nil {
+				t.Errorf("call %d counting %d too many: no error", at, delta)
+			}
+		}
+
+		if calls < 5 {
+			t.Errorf("the sequence went out in %d writes, too few to say anything", calls)
+		}
+	}
+}
+
 // TestContractProperties: every properties byte decodes as the
 // specification says and encodes back to itself, and the codes beyond the
 // 225 the format defines are refused as it refuses them; lc+lp above four

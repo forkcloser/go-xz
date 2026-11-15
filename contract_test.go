@@ -445,6 +445,81 @@ func TestContractLongPadding(t *testing.T) {
 	}
 }
 
+// miscounter is a writer whose nth Write breaks io.Writer's contract with
+// no error, or the first one after it that is given anything: by delta
+// below zero it takes that many bytes fewer than it was given and says so,
+// above zero it takes them all and reports more.
+type miscounter struct {
+	calls, at, delta int
+	hit              bool
+}
+
+func (m *miscounter) Write(p []byte) (int, error) {
+	m.calls++
+	// An empty write has no count to get wrong.
+	if m.calls >= m.at && !m.hit && len(p) > 0 {
+		m.hit = true
+
+		return len(p) + m.delta, nil
+	}
+
+	return len(p), nil
+}
+
+// TestContractWriterHoldsItsWriterToItsCount: the stream goes out in many
+// writes and the writer counts on each having gone out whole. An underlying
+// writer that takes less than it was given without an error, at any one of
+// its calls, is io.ErrShortWrite from the Write or Close that meets it, or
+// with workers a later one; one that reports more than it was given is an
+// error too. Neither is a file reported as written, and neither is a panic.
+func TestContractWriterHoldsItsWriterToItsCount(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+
+	for wname, workers := range map[string][]xz.Option{"no workers": nil, "workers": {xz.WithWorkers(2)}} {
+		for _, delta := range []int{-1, 3} {
+			var calls int
+
+			for at := 1; ; at++ {
+				m := &miscounter{at: at, delta: delta}
+
+				err := func() error {
+					w, err := xz.NewWriter(m, append([]xz.Option{xz.WithBlockSize(1000)}, workers...)...)
+					if err != nil {
+						return err
+					}
+
+					if _, err = w.Write(data); err != nil {
+						return err
+					}
+
+					return w.Close()
+				}()
+
+				if !m.hit {
+					// The file is written in fewer calls than that.
+					calls = at - 1
+
+					break
+				}
+
+				if delta < 0 && !errors.Is(err, io.ErrShortWrite) {
+					t.Errorf("%s, call %d a byte short: %v, want io.ErrShortWrite", wname, at, err)
+				}
+
+				if delta > 0 && err == nil {
+					t.Errorf("%s, call %d counting %d too many: no error", wname, at, delta)
+				}
+			}
+
+			if calls < 5 {
+				t.Errorf("%s: the file went out in %d writes, too few to say anything", wname, calls)
+			}
+		}
+	}
+}
+
 // countingWriter accepts everything up to its limit, then behaves as its
 // mode says: accepts nothing without an error, or fails.
 type countingWriter struct {
