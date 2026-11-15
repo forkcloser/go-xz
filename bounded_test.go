@@ -454,11 +454,10 @@ func (o inOrder) Read(p []byte) (int, error) { return o.m.Read(p) }
 // TestBoundedReadCost: opening and reading a file costs in proportion to
 // the file. Stream padding is legal at any length and a stream may be
 // empty, so a megabyte of padding and twenty thousand empty streams are
-// both valid files a few bytes describe. Read in order, the padding is at
-// most a Read call a kilobyte, where it was one for every four bytes; with
-// workers, what is fetched by offset is within four times the file, where
-// a buffer's worth was fetched for every stream, a thousand times the file,
-// and the padding is found in a fetch a kilobyte at most, not one a group.
+// both valid files a few bytes describe. Read in order, either is at most
+// a Read call a kilobyte; with workers, what is fetched by offset is within
+// four times the file, and the fetches made to open it are at most one a
+// kilobyte and a few a stream.
 func TestBoundedReadCost(t *testing.T) {
 	t.Parallel()
 

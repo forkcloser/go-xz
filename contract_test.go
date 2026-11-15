@@ -1047,8 +1047,7 @@ func readers() map[string]func(file []byte) (*xz.Reader, error) {
 // error and no byte, and so does WriteTo, where the bytes after the fault
 // are a whole valid file: a block header with a wrong CRC before a valid
 // block, a wrong check before the right one, a byte after the stream of a
-// single-stream reader, an index with a wrong CRC. Each of them once gave
-// the payload, or a clean io.EOF, to the caller who read again.
+// single-stream reader, an index with a wrong CRC.
 func TestContractReaderKeepsItsFirstError(t *testing.T) {
 	t.Parallel()
 
@@ -1317,8 +1316,7 @@ func (w *closingWriter) Write(p []byte) (int, error) {
 // TestContractCloseDuringWriteTo: a copy cut by a Close from another
 // goroutine is never reported as a whole one. With 300 blocks and four
 // workers the Close lands long before the end, so WriteTo and io.Copy
-// return an error matching ErrClosed, every time: each used to return nil
-// about one time in four, with what it had written so far.
+// return an error matching ErrClosed, every time.
 func TestContractCloseDuringWriteTo(t *testing.T) {
 	t.Parallel()
 
