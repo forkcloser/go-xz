@@ -193,7 +193,7 @@ func main() {
 
 ## Documentation
 
-You can find the full documentation on [pkg.go.dev](https://pkg.go.dev/github.com/forkcloser/xz), under the module's v2 once it is tagged, or with `go doc github.com/forkcloser/xz/v2`.
+You can find the full documentation on [pkg.go.dev](https://pkg.go.dev/github.com/forkcloser/xz/v2), or with `go doc github.com/forkcloser/xz/v2`.
 
 ## Security & Vulnerabilities
 

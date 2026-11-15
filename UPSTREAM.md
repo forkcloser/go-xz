@@ -42,3 +42,9 @@ adapted to the fork; nothing is merged from upstream.
 | The LZMA2 decoder refuses what liblzma refuses | https://github.com/forkcloser/xz/pull/121 |
 | A complete file that is not a valid `.xz` file is corrupt, in both readers | https://github.com/forkcloser/xz/pull/123 |
 | A block header is read into a buffer its reader owns | https://github.com/forkcloser/xz/pull/126 |
+| The writer encodes blocks concurrently: `WithWorkers` on `NewWriter`, the file the sequential writer writes at that block size | https://github.com/forkcloser/xz/pull/199 |
+| A `Reader` keeps its first error (upstream's goes on from where the input stands, and after a block header with a wrong CRC returns the data that follows), and `Close` closes it | https://github.com/forkcloser/xz/pull/201 |
+| `lzma.Reader2.Read` returns what a flushed chunk held (upstream's waits for the next chunk until its buffer is full) | https://github.com/forkcloser/xz/pull/203 |
+| Stream padding and empty streams cost what they hold to read (upstream reads padding four bytes a `Read`) | https://github.com/forkcloser/xz/pull/204 |
+| `Writer` and `lzma.Writer2` hold their underlying writer to its count: a short count without an error is `io.ErrShortWrite` (upstream reports the file written) | https://github.com/forkcloser/xz/pull/206 |
+| A classic `.lzma` header states a dictionary size XZ Utils reads (upstream writes the size as given, and `xz` does not recognise the file) | https://github.com/forkcloser/xz/pull/210 |
