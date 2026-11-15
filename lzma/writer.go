@@ -8,6 +8,8 @@ import (
 	"bufio"
 	"errors"
 	"io"
+
+	"github.com/forkcloser/xz/v2/internal/dictsize"
 )
 
 // MinDictSize and MaxDictSize bound the dictionary size.
@@ -43,10 +45,19 @@ func NewWriter(lzma io.Writer, opts ...Option) (w *Writer, err error) {
 		return nil, err
 	}
 
+	// The header states the smallest size XZ Utils reads that holds the
+	// dictionary in use, 2^n, 2^n+2^(n-1) or 4 GiB-1: it reads no other,
+	// and a decoder may always be given more room. The encoder keeps the
+	// size it was given.
+	stated, err := dictsize.Decode(dictsize.Encode(int64(o.dictSize)))
+	if err != nil {
+		return nil, err
+	}
+
 	w = &Writer{h: Header{
 		Properties: o.props,
-		// #nosec G115 -- the dictionary size is within MinDictSize to MaxDictSize
-		DictSize: uint32(o.dictSize),
+		// #nosec G115 -- a dictionary size the one-byte code expresses, at most 1<<32 - 1
+		DictSize: uint32(stated),
 		Size:     o.size,
 	}}
 
@@ -60,12 +71,12 @@ func NewWriter(lzma io.Writer, opts ...Option) (w *Writer, err error) {
 
 	state := newState(w.h.Properties)
 
-	m, err := newHashTable(int(w.h.DictSize), 4)
+	m, err := newHashTable(o.dictSize, 4)
 	if err != nil {
 		return nil, err
 	}
 
-	dict, err := newEncoderDict(int(w.h.DictSize), lookaheadSize, m)
+	dict, err := newEncoderDict(o.dictSize, lookaheadSize, m)
 	if err != nil {
 		return nil, err
 	}

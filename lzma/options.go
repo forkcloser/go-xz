@@ -53,7 +53,9 @@ const defaultDictSize = 8 << 20
 // a header asking for more is refused with ErrUnsupported. The dictionary is
 // grown on demand and costs what the stream decodes, so the default is no
 // bound below the format's 4 GiB-1; the option is for a reader of untrusted
-// input that wants a smaller one. NewReader.
+// input that wants a smaller one. The limit is held against what the header
+// states, which for a stream of this package's writer is WithDictSize's
+// rounded size. NewReader.
 func WithMaxDictSize(n int64) Option {
 	return Option{"WithMaxDictSize", func(o *options) {
 		o.set |= optMaxDictSize
@@ -63,7 +65,9 @@ func WithMaxDictSize(n int64) Option {
 
 // WithDictSize sets the encoder's dictionary size, MinDictSize to
 // MaxDictSize (default 8 MiB). A larger dictionary finds longer matches at
-// the cost of memory on both sides. NewWriter, NewWriter2.
+// the cost of memory on both sides. A classic header states the smallest
+// size XZ Utils reads that holds it: one of the form 2^n or 2^n+2^(n-1),
+// or 4 GiB-1 above the largest of those. NewWriter, NewWriter2.
 func WithDictSize(n int) Option {
 	return Option{"WithDictSize", func(o *options) {
 		o.set |= optDictSize
