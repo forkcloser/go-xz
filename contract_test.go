@@ -29,6 +29,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"testing"
@@ -377,6 +378,75 @@ func rawBlock(data []byte) refBlock {
 	lzma2 = append(lzma2, data...)
 
 	return refBlock{data: data, lzma2: append(lzma2, 0x00)}
+}
+
+// TestContractWriterRefusesBeforeWriting: an option out of range is the
+// constructor's error, with or without workers, and the constructor has
+// then written nothing, the dictionary and the properties LZMA2 cannot take
+// included.
+func TestContractWriterRefusesBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	for name, opt := range map[string]xz.Option{
+		"a dictionary below the smallest": xz.WithDictSize(lzma.MinDictSize - 1),
+		"no dictionary":                   xz.WithDictSize(0),
+		"a negative dictionary":           xz.WithDictSize(-1),
+		"lc and lp above four":            xz.WithProperties(3, 2, 2),
+		"lc above eight":                  xz.WithProperties(9, 0, 2),
+		"pb above four":                   xz.WithProperties(3, 0, 5),
+		"a negative lc":                   xz.WithProperties(-1, 0, 2),
+		"a negative lp":                   xz.WithProperties(3, -1, 2),
+		"a negative pb":                   xz.WithProperties(3, 0, -1),
+		"a negative block size":           xz.WithBlockSize(-1),
+		"an unknown check":                xz.WithCheck(xz.Check(9)),
+		"a delta distance of zero":        xz.WithFilters(xz.Filter{ID: xz.Delta}),
+	} {
+		for wname, workers := range map[string][]xz.Option{"no workers": nil, "workers": {xz.WithWorkers(2)}} {
+			var out bytes.Buffer
+
+			w, err := xz.NewWriter(&out, append([]xz.Option{opt}, workers...)...)
+			if err == nil || w != nil {
+				t.Errorf("%s, %s: NewWriter returned a writer and %v", name, wname, err)
+			}
+
+			if out.Len() != 0 {
+				t.Errorf("%s, %s: %d bytes written before the refusal", name, wname, out.Len())
+			}
+		}
+	}
+
+	// The largest dictionary is taken and one byte more is not. With
+	// workers no encoder is built before a block is, so neither allocates
+	// it. An int holds these sizes where it is 64 bits wide, and the
+	// conversion is of a variable so that this compiles where it is not.
+	if largest := int64(lzma.MaxDictSize); math.MaxInt > lzma.MaxDictSize {
+		var out bytes.Buffer
+
+		if _, err := xz.NewWriter(&out, xz.WithDictSize(int(largest)), xz.WithWorkers(2)); err != nil {
+			t.Errorf("the largest dictionary: %v", err)
+		}
+
+		out.Reset()
+
+		w, err := xz.NewWriter(&out, xz.WithDictSize(int(largest+1)), xz.WithWorkers(2))
+		if err == nil || w != nil || out.Len() != 0 {
+			t.Errorf("a dictionary above the largest: a writer and %v, %d bytes written", err, out.Len())
+		}
+	}
+
+	// The bounds themselves are taken.
+	for name, opt := range map[string]xz.Option{
+		"the smallest dictionary": xz.WithDictSize(lzma.MinDictSize),
+		"lc four, lp none":        xz.WithProperties(4, 0, 4),
+		"lc none, lp four":        xz.WithProperties(0, 4, 0),
+	} {
+		data := cData(3000)
+
+		file := writeAll(t, []xz.Option{opt}, data)
+		if got, err := refParse(file); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s: the reference reads %d bytes, %v", name, len(got), err)
+		}
+	}
 }
 
 // TestContractAlignment: blocks whose unpadded size takes every residue

@@ -64,6 +64,8 @@ var (
 	errOptionScope   = errors.New("xz: option does not apply to this constructor")
 	errMaxDictSize   = errors.New("xz: dictionary size limit out of range")
 	errWorkers       = errors.New("xz: workers must be positive")
+	errDictSize      = errors.New("xz: dictionary size out of range")
+	errProperties    = errors.New("xz: lc, lp or pb out of range")
 	errBlockSize     = errors.New("xz: block size must be positive")
 	errCheck         = errors.New("xz: unknown check")
 	errTooManyBefore = errors.New("xz: more than three filters before LZMA2")
@@ -74,6 +76,13 @@ var (
 
 // defaultDictSize is the writer's dictionary when none is asked for.
 const defaultDictSize = 8 << 20
+
+// What LZMA2 allows of the properties: lc and lp at most four between them,
+// pb at most four.
+const (
+	maxLCLP = 4
+	maxPB   = 4
+)
 
 // WithMaxDictSize bounds the dictionary a block header may ask for: a
 // block asking for more is refused with ErrUnsupported. The dictionary is
@@ -369,6 +378,14 @@ func (o *options) validate() error {
 
 	if o.workers < 1 {
 		return fmt.Errorf("%w: %d", errWorkers, o.workers)
+	}
+
+	if !(lzma.MinDictSize <= o.dictSize && int64(o.dictSize) <= lzma.MaxDictSize) {
+		return fmt.Errorf("%w: %d", errDictSize, o.dictSize)
+	}
+
+	if p := o.props; p.LC < 0 || p.LP < 0 || p.LC+p.LP > maxLCLP || p.PB < 0 || p.PB > maxPB {
+		return fmt.Errorf("%w: lc %d, lp %d, pb %d", errProperties, p.LC, p.LP, p.PB)
 	}
 
 	if o.blockSize <= 0 {
