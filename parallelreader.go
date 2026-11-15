@@ -201,10 +201,14 @@ const paddingScanBufSize = 32 << 10
 // zeros and returns the position of the first one, which is where the stream
 // before the padding ends. A return of zero means everything up to pos was
 // padding. pos must be a multiple of four.
-func skipStreamPadding(xz io.ReaderAt, pos int64) (int64, error) {
-	buf := make([]byte, paddingScanBufSize)
-	for pos >= 4 {
-		n := min(int64(len(buf)), pos)
+//
+// It reads one group first and doubles from there, up to buf: a stream with
+// no padding after it, which is nearly every stream, costs four bytes, where
+// a buffer's worth read for each made a file of many small streams cost a
+// thousand times its size to open.
+func skipStreamPadding(xz io.ReaderAt, pos int64, buf []byte) (int64, error) {
+	for chunk := int64(4); pos >= 4; chunk = min(2*chunk, int64(len(buf))) {
+		n := min(chunk, pos)
 		n -= n % 4 // only whole groups, so the scan stays aligned
 
 		p := buf[:n]
@@ -258,6 +262,7 @@ type layout struct {
 
 func parseBlocks(xz io.ReaderAt, size int64) (l layout, err error) {
 	streams := make([][]blockDesc, 0, 1)
+	scan := make([]byte, paddingScanBufSize)
 
 	pos := size
 	for pos > 0 {
@@ -265,7 +270,7 @@ func parseBlocks(xz io.ReaderAt, size int64) (l layout, err error) {
 			return layout{}, corruptf("xz: file size not a multiple of four bytes")
 		}
 
-		if pos, err = skipStreamPadding(xz, pos); err != nil {
+		if pos, err = skipStreamPadding(xz, pos, scan); err != nil {
 			return layout{}, err
 		}
 
