@@ -528,6 +528,53 @@ func TestContractWriteTo(t *testing.T) {
 	}
 }
 
+// seeker is a file whose nth Seek fails.
+type seeker struct {
+	*bytes.Reader
+
+	calls, failAt int
+}
+
+var errSeek = errors.New("the seek failed")
+
+func (s *seeker) Seek(offset int64, whence int) (int64, error) {
+	s.calls++
+	if s.calls == s.failAt {
+		return 0, errSeek
+	}
+
+	return s.Reader.Seek(offset, whence)
+}
+
+// TestContractSeekFailure: "an I/O error from the underlying reader is
+// passed through untouched". A reader with workers asks a seekable input
+// for its position and its size, then puts the position back. An input that
+// cannot say either is read in order, from where it stands; one that cannot
+// be put back has lost its position, and that is its error, not a file cut
+// short.
+func TestContractSeekFailure(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, data, 1000))
+
+	for failAt := 1; failAt <= 2; failAt++ {
+		r, err := xz.NewReader(&seeker{Reader: bytes.NewReader(file), failAt: failAt}, xz.WithWorkers(2))
+		if err != nil {
+			t.Fatalf("Seek %d fails: NewReader: %v", failAt, err)
+		}
+
+		if got, rerr := io.ReadAll(r); rerr != nil || !bytes.Equal(got, data) {
+			t.Errorf("Seek %d fails: %d bytes, %v", failAt, len(got), rerr)
+		}
+	}
+
+	//nolint:errorlint // the same error, untouched
+	if _, err := xz.NewReader(&seeker{Reader: bytes.NewReader(file), failAt: 3}, xz.WithWorkers(2)); err != errSeek {
+		t.Errorf("the Seek that puts the position back fails: %v, want the input's error", err)
+	}
+}
+
 // lyingIndex returns file with one record of its one-stream index altered
 // by delta on the first byte of the field (0 the unpadded size, 1 the
 // uncompressed size) and the index CRC-32 recomputed, so only the records

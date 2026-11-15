@@ -57,6 +57,7 @@ golangci:
           - .Read(
           - .ReadAt(
           - .ReadByte(
+          - .Seek(
           - .Write(
           - .WriteByte(
           - .Close(

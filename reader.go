@@ -72,7 +72,13 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 	r = &Reader{opts: o, xz: xz}
 
 	if o.workers > 1 {
-		if section, ok := randomAccess(xz); ok {
+		var section *io.SectionReader
+
+		if section, err = randomAccess(xz); err != nil {
+			return nil, err
+		}
+
+		if section != nil {
 			r.par, err = newParallelReader(section, section.Size(), o)
 			if err != nil {
 				return nil, err
@@ -101,31 +107,34 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 // randomAccess returns r as a section from its current position to its
 // end when it can be read by offset: an io.ReaderAt that is also an
 // io.Seeker, which tells the position and the size. The position is left
-// where it was.
-func randomAccess(r io.Reader) (*io.SectionReader, bool) {
+// where it was, and nil is an input to read in order; an input whose
+// position could not be put back is its error, since reading it in order
+// would start from nowhere.
+func randomAccess(r io.Reader) (*io.SectionReader, error) {
 	rs, ok := r.(interface {
 		io.ReaderAt
 		io.Seeker
 	})
 	if !ok {
-		return nil, false
+		return nil, nil //nolint:nilnil // no section and no error: an input to read in order
 	}
 
 	start, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return nil, false
+		return nil, nil //nolint:nilnil,nilerr // it cannot tell its position, and has not moved
 	}
 
-	end, err := rs.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, false
-	}
+	end, sizeErr := rs.Seek(0, io.SeekEnd)
 
 	if _, err = rs.Seek(start, io.SeekStart); err != nil {
-		return nil, false
+		return nil, err
 	}
 
-	return io.NewSectionReader(rs, start, end-start), true
+	if sizeErr != nil {
+		return nil, nil //nolint:nilnil,nilerr // it cannot tell its size; back where it was
+	}
+
+	return io.NewSectionReader(rs, start, end-start), nil
 }
 
 // Close releases the workers of a reader that decodes concurrently; it is
