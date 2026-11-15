@@ -187,14 +187,94 @@ func TestContractWriter(t *testing.T) {
 					t.Fatalf("len %d, %s: the stream flags say check %#x", n, cname, file[7])
 				}
 
-				want := 1
-				if blockSize > 0 && n > 0 {
+				// A block begins with its first byte: none for no data,
+				// one for any without a block size.
+				want := min(n, 1)
+				if blockSize > 0 {
 					want = (n + int(blockSize) - 1) / int(blockSize)
 				}
 
 				if blocks := refCountBlocks(file); blocks != want {
 					t.Fatalf("len %d, %s, block %d: %d blocks, want %d", n, cname, blockSize, blocks, want)
 				}
+			}
+		}
+	}
+}
+
+// TestContractWriterEmptyInput: "a writer given no data writes no block,
+// the empty stream xz writes": the header, an index of no records and the
+// footer, 32 bytes, which is the reference's stream of no blocks byte for
+// byte, whatever the check, the block size and the workers, and whether
+// nothing was written or only writes of nothing.
+func TestContractWriterEmptyInput(t *testing.T) {
+	t.Parallel()
+
+	for cname, check := range checks() {
+		want := refStream(refOptions{check: check.flags}, nil)
+		if len(want) != 32 {
+			t.Fatalf("%s: the reference's empty stream is %d bytes", cname, len(want))
+		}
+
+		for oname, opts := range map[string][]xz.Option{
+			"no option":    nil,
+			"a block size": {xz.WithBlockSize(1000)},
+			"workers":      {xz.WithWorkers(2)},
+		} {
+			opts = append([]xz.Option{xz.WithCheck(check.check)}, opts...)
+
+			for wname, pieces := range map[string][][]byte{
+				"nothing written":   nil,
+				"writes of nothing": {nil, {}, {}},
+			} {
+				if file := writeAll(t, opts, pieces...); !bytes.Equal(file, want) {
+					t.Errorf("%s, %s, %s: %d bytes, not the reference's empty stream", cname, oname, wname, len(file))
+				}
+			}
+		}
+	}
+}
+
+// errNoRoom is what a countingWriter out of room fails with here.
+var errNoRoom = errors.New("no room left")
+
+// TestContractWriterCloseKeepsItsFailure: "a second Close writes nothing and
+// returns an error matching ErrClosed, or the error the first one failed
+// with". An underlying writer with room for the stream header and not for
+// the index and the footer that end an empty stream fails Close wherever
+// its room ends; a second Close and a Write return that failure, and
+// nothing more reaches it.
+func TestContractWriterCloseKeepsItsFailure(t *testing.T) {
+	t.Parallel()
+
+	for wname, workers := range map[string][]xz.Option{"no workers": nil, "workers": {xz.WithWorkers(2)}} {
+		for room := 12; room < 32; room++ {
+			out := &countingWriter{limit: room, fail: errNoRoom}
+
+			w, err := xz.NewWriter(out, workers...)
+			if err != nil {
+				t.Fatalf("%s, room for %d bytes: NewWriter: %v", wname, room, err)
+			}
+
+			if err = w.Close(); !errors.Is(err, errNoRoom) {
+				t.Fatalf("%s, room for %d bytes: Close: %v, want the writer's error", wname, room, err)
+			}
+
+			written := out.buf.Len()
+
+			if err = w.Close(); !errors.Is(err, errNoRoom) {
+				t.Errorf("%s, room for %d bytes: a second Close: %v, want the first one's failure", wname, room, err)
+			}
+
+			if n, werr := w.Write([]byte("more")); n != 0 || !errors.Is(werr, errNoRoom) {
+				t.Errorf("%s, room for %d bytes: Write after the failed Close: %d, %v", wname, room, n, werr)
+			}
+
+			if out.buf.Len() != written {
+				t.Errorf(
+					"%s, room for %d bytes: %d bytes written after the failed Close",
+					wname, room, out.buf.Len()-written,
+				)
 			}
 		}
 	}

@@ -145,12 +145,6 @@ func NewWriter(xz io.Writer, opts ...Option) (w *Writer, err error) {
 
 	if w.opts.blocks {
 		w.enc = &blockEncoders{opts: &w.opts, newHash: w.newHash, limit: w.opts.workers}
-
-		return w, nil
-	}
-
-	if err = w.newBlockWriter(); err != nil {
-		return nil, err
 	}
 
 	return w, nil
@@ -186,32 +180,19 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 
 	if w.enc != nil {
 		n, err = w.enc.write(w.xz, &w.index, p)
-
-		return n, w.setErr(err)
+	} else {
+		n, err = w.writeBlocks(p)
 	}
 
-	for {
-		k, err := w.bw.Write(p[n:])
-
-		n += k
-		if !errors.Is(err, errNoSpace) {
-			return n, w.setErr(err)
-		}
-
-		if err = w.closeBlockWriter(); err != nil {
-			return n, w.setErr(err)
-		}
-
-		if err = w.newBlockWriter(); err != nil {
-			return n, w.setErr(err)
-		}
-	}
+	return n, w.setErr(err)
 }
 
-// Close closes the writer and adds the footer to the Writer. Close
-// doesn't close the underlying writer. After a failed Write it returns that
-// error and writes nothing; a second Close writes nothing and returns an
-// error matching ErrClosed.
+// Close ends the stream: it writes the block in progress, the index and the
+// footer to the underlying writer, which it does not close. A writer given
+// no data writes no block, the empty stream xz writes. After a failed Write
+// it returns that error and writes nothing; a second Close writes nothing
+// and returns an error matching ErrClosed, or the error the first one
+// failed with.
 func (w *Writer) Close() error {
 	if w.err != nil {
 		return w.err
@@ -224,9 +205,11 @@ func (w *Writer) Close() error {
 	w.closed = true
 
 	var err error
-	if w.enc != nil {
+
+	switch {
+	case w.enc != nil:
 		err = w.enc.finish(w.xz, &w.index)
-	} else {
+	case w.bw != nil:
 		err = w.closeBlockWriter()
 	}
 
@@ -251,6 +234,35 @@ func (w *Writer) Close() error {
 	return nil
 }
 
+// writeBlocks writes p to the block in progress and the ones that follow
+// it, each closed when it is full.
+func (w *Writer) writeBlocks(p []byte) (n int, err error) {
+	for {
+		// A block begins with the first byte it holds: an input with none
+		// writes no block.
+		if w.bw == nil {
+			if n == len(p) {
+				return n, nil
+			}
+
+			if err = w.newBlockWriter(); err != nil {
+				return n, err
+			}
+		}
+
+		k, werr := w.bw.Write(p[n:])
+
+		n += k
+		if !errors.Is(werr, errNoSpace) {
+			return n, werr
+		}
+
+		if err = w.closeBlockWriter(); err != nil {
+			return n, err
+		}
+	}
+}
+
 // setErr records the first failure. Later calls report it rather than
 // continue on a block writer whose state is unknown.
 func (w *Writer) setErr(err error) error {
@@ -270,6 +282,7 @@ func (w *Writer) closeBlockWriter() error {
 	}
 
 	w.index = append(w.index, w.bw.record())
+	w.bw = nil
 
 	return nil
 }

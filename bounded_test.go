@@ -65,7 +65,7 @@ func TestBoundedWriterBlocks(t *testing.T) {
 		pieces [][]byte
 		blocks int
 	}{
-		{"empty", [][]byte{{}}, 1},
+		{"empty", [][]byte{{}}, 0},
 		{"one byte", [][]byte{data[:1]}, 1},
 		{"the size", [][]byte{data[:size]}, 1},
 		{"one past", [][]byte{data[:size+1]}, 2},
