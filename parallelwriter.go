@@ -45,9 +45,9 @@ type blockEncoders struct {
 	// data and what it compresses to until it is written.
 	limit int
 	// block is the block being filled, never past opts.blockSize. It is
-	// handed to an encoder when more data comes, or at Close: a file's
-	// last block is cut where the data ends, and an empty file is one
-	// empty block, as the sequential writer writes them.
+	// handed to an encoder when more data comes, or at Close when it holds
+	// anything: a file's last block is cut where the data ends, and a file
+	// of no data has no block, as the sequential writer writes them.
 	block []byte
 	// pending is the blocks handed over and not yet written, oldest first.
 	pending []chan encodedBlock
@@ -134,10 +134,14 @@ func (e *blockEncoders) writeOldest(xz io.Writer, index *[]record) error {
 	return nil
 }
 
-// finish hands the last block over and writes every pending one.
+// finish hands the last block over, when it holds anything, and writes
+// every pending one.
 func (e *blockEncoders) finish(xz io.Writer, index *[]record) error {
-	if err := e.handOver(xz, index); err != nil {
-		return err
+	// Nothing in the block is nothing written at all: no block.
+	if len(e.block) > 0 {
+		if err := e.handOver(xz, index); err != nil {
+			return err
+		}
 	}
 
 	for len(e.pending) > 0 {
