@@ -123,10 +123,14 @@ func (d *decoder) decompress() error {
 	}
 
 	for d.Dict.Available() >= maxMatchLen {
-		// The declared size may already be reached: a stream of size zero
-		// holds no operation at all, only the range coder's flush.
-		if d.size >= 0 && d.Decompressed() >= d.size {
-			return d.sizeReached()
+		// left is what the declared size still allows; no size, no bound.
+		left := int64(maxMatchLen)
+		if d.size >= 0 {
+			// The declared size may already be reached: a stream of size
+			// zero holds no operation at all, only the range coder's flush.
+			if left = d.size - d.Decompressed(); left <= 0 {
+				return d.sizeReached()
+			}
 		}
 
 		op, err := d.readOp()
@@ -157,6 +161,12 @@ func (d *decoder) decompress() error {
 			return io.ErrUnexpectedEOF
 		default:
 			return err
+		}
+
+		// A match is written whole, so one that crosses the declared size
+		// is refused before it is: nothing past the size reaches a caller.
+		if int64(op.n) > left {
+			return errSize
 		}
 
 		if err = d.apply(op); err != nil {

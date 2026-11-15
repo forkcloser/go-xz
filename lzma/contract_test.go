@@ -21,10 +21,12 @@ package lzma_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math/rand/v2"
 	"testing"
+	"time"
 
 	"github.com/forkcloser/xz/v2/internal/lzmaspec"
 	"github.com/forkcloser/xz/v2/lzma"
@@ -610,6 +612,147 @@ func TestContractOptionBounds(t *testing.T) {
 
 	if _, err := lzma.NewWriter(io.Discard, lzma.WithMaxDictSize(lzma.MinDictSize)); err == nil {
 		t.Error("the writer accepted WithMaxDictSize")
+	}
+}
+
+// TestContractOutputWithinDeclaredSize: nothing past the declared size is
+// handed out. A stream whose header says sixteen bytes and whose second
+// operation is a match that crosses them is ErrCorrupt, "sizes that disagree
+// with the data", and the bytes read before the error are at most sixteen
+// of the data: a match is written whole, and one that crosses the size was
+// written, and read, before the size was looked at. The same holds for an
+// LZMA2 chunk, whose header carries the size.
+func TestContractOutputWithinDeclaredSize(t *testing.T) {
+	t.Parallel()
+
+	const declared = 16
+
+	data := bytes.Repeat([]byte("abcdefgh"), 65)
+
+	check := func(t *testing.T, r io.Reader) {
+		t.Helper()
+
+		got, err := io.ReadAll(r)
+		if !errors.Is(err, lzma.ErrCorrupt) {
+			t.Errorf("%v, want an error matching ErrCorrupt", err)
+		}
+
+		if len(got) > declared || !bytes.HasPrefix(data, got) {
+			t.Errorf("%d bytes read from a stream declaring %d: %q", len(got), declared, got)
+		}
+	}
+
+	t.Run("classic", func(t *testing.T) {
+		t.Parallel()
+
+		stream := classic(t, wcase{}, data)
+		binary.LittleEndian.PutUint64(stream[5:], declared)
+
+		r, err := lzma.NewReader(bytes.NewReader(stream))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		check(t, r)
+	})
+
+	t.Run("an LZMA2 chunk", func(t *testing.T) {
+		t.Parallel()
+
+		c := w2case{}
+		chunks := lzma2(t, c, data)
+		// The chunk's uncompressed size, less one: five bits of the control
+		// byte, then two bytes.
+		chunks[0] &^= 0x1f
+		binary.BigEndian.PutUint16(chunks[1:], declared-1)
+
+		r, err := lzma.NewReader2(bytes.NewReader(chunks), c.dictSize())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		check(t, r)
+	})
+}
+
+// TestContractFlushedChunkIsRead: Flush "writes all buffered data out to the
+// underlying stream", and a reader at the other end of it reads that data
+// without waiting for what the writer sends next: Read returns what is
+// there, as readers do. It used to go on to the next chunk's header until
+// its buffer was full, so an exchange over a flushed stream stood still.
+func TestContractFlushedChunkIsRead(t *testing.T) {
+	t.Parallel()
+
+	pr, pw := io.Pipe()
+	next := make(chan struct{})
+	written := make(chan error, 1)
+
+	go func() {
+		written <- func() error {
+			w, err := lzma.NewWriter2(pw)
+			if err != nil {
+				return err
+			}
+
+			if _, err = w.Write([]byte("hello")); err != nil {
+				return err
+			}
+
+			if err = w.Flush(); err != nil {
+				return err
+			}
+
+			<-next
+
+			if _, err = w.Write([]byte("world")); err != nil {
+				return err
+			}
+
+			if err = w.Close(); err != nil {
+				return err
+			}
+
+			return pw.Close()
+		}()
+	}()
+
+	r, err := lzma.NewReader2(pr, w2case{}.dictSize())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type read struct {
+		data string
+		err  error
+	}
+
+	first := make(chan read, 1)
+
+	go func() {
+		buf := make([]byte, 4<<10)
+
+		n, rerr := r.Read(buf)
+		first <- read{string(buf[:n]), rerr}
+	}()
+
+	select {
+	case got := <-first:
+		if got.data != "hello" || got.err != nil {
+			t.Errorf("the first Read: %q, %v", got.data, got.err)
+		}
+
+		close(next)
+	case <-time.After(10 * time.Second):
+		close(next)
+		t.Fatal("Read waits for more than the flushed chunk")
+	}
+
+	if rest, rerr := io.ReadAll(r); string(rest) != "world" || rerr != nil {
+		t.Errorf("after it: %q, %v", rest, rerr)
+	}
+
+	if werr := <-written; werr != nil {
+		t.Fatal(werr)
 	}
 }
 
