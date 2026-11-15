@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 	"slices"
 )
 
@@ -76,8 +77,11 @@ func nopWriteCloser(w io.Writer) io.WriteCloser {
 type Writer struct {
 	opts options
 
-	xz      io.Writer
+	xz io.Writer
+	// One of the two writes the blocks: bw one after the other as the data
+	// comes, enc concurrently, with WithWorkers.
 	bw      *blockWriter
+	enc     *blockEncoders
 	newHash func() hash.Hash
 	h       header
 	index   []record
@@ -87,11 +91,21 @@ type Writer struct {
 
 // NewWriter creates a writer that compresses what is written to it as an
 // xz stream and writes the stream header to xz. Options: WithDictSize,
-// WithProperties, WithBlockSize, WithCheck, WithFilters.
+// WithProperties, WithBlockSize, WithCheck, WithFilters, WithWorkers.
 func NewWriter(xz io.Writer, opts ...Option) (w *Writer, err error) {
 	o, err := apply(opts, writerOptions, "NewWriter")
 	if err != nil {
 		return nil, err
+	}
+
+	if o.blocks {
+		if o.set&optBlockSize == 0 {
+			o.blockSize = parallelBlockSize(o.dictSize)
+		}
+		// A block is held whole while it is encoded.
+		if o.blockSize > math.MaxInt {
+			return nil, fmt.Errorf("%w: %d with workers, more than this platform addresses", errBlockSize, o.blockSize)
+		}
 	}
 
 	// The chain is built once here so a wrong filter is the constructor's
@@ -122,6 +136,12 @@ func NewWriter(xz io.Writer, opts ...Option) (w *Writer, err error) {
 
 	if _, err = xz.Write(data); err != nil {
 		return nil, err
+	}
+
+	if w.opts.blocks {
+		w.enc = &blockEncoders{opts: &w.opts, newHash: w.newHash, limit: w.opts.workers}
+
+		return w, nil
 	}
 
 	if err = w.newBlockWriter(); err != nil {
@@ -159,6 +179,12 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 		return 0, errClosed
 	}
 
+	if w.enc != nil {
+		n, err = w.enc.write(w.xz, &w.index, p)
+
+		return n, w.setErr(err)
+	}
+
 	for {
 		k, err := w.bw.Write(p[n:])
 
@@ -193,7 +219,13 @@ func (w *Writer) Close() error {
 	w.closed = true
 
 	var err error
-	if err = w.closeBlockWriter(); err != nil {
+	if w.enc != nil {
+		err = w.enc.finish(w.xz, &w.index)
+	} else {
+		err = w.closeBlockWriter()
+	}
+
+	if err != nil {
 		return w.setErr(err)
 	}
 

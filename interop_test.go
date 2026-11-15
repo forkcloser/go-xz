@@ -187,6 +187,19 @@ func TestInteropWriterToXZUtils(t *testing.T) {
 			),
 			nil,
 		},
+		// The blocks a writer with workers encodes concurrently.
+		{"workers-blocks-64k", xzWriter(xz.WithWorkers(4), xz.WithBlockSize(64<<10)), nil},
+		{"workers-default-blocks", xzWriter(xz.WithWorkers(3), xz.WithDictSize(lzma.MinDictSize)), nil},
+		{
+			"workers-delta-x86-sha256",
+			xzWriter(
+				xz.WithWorkers(0),
+				xz.WithFilters(xz.Filter{ID: xz.Delta, Distance: 2}, xz.Filter{ID: xz.X86}),
+				xz.WithBlockSize(64<<10),
+				xz.WithCheck(xz.CheckSHA256),
+			),
+			nil,
+		},
 		{"lzma", func(w io.Writer) (io.WriteCloser, error) { return lzma.NewWriter(w) }, []string{"--format=lzma"}},
 		{
 			"lzma2-raw",

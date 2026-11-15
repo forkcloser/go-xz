@@ -168,7 +168,8 @@ func FuzzReadersAgree(f *testing.F) {
 // FuzzRoundTrip checks the other direction: anything this package compresses,
 // it must decompress back to exactly the input. The writer is far less exposed
 // than the reader, but a round trip that loses data is the worst bug a
-// compression library can have.
+// compression library can have. With a block size, the writer with workers
+// has to write the very file the sequential one does.
 func FuzzRoundTrip(f *testing.F) {
 	f.Add([]byte(""), uint8(0), uint16(0))
 	f.Add([]byte("the quick brown fox jumps over the lazy dog"), uint8(1), uint16(0))
@@ -212,6 +213,36 @@ func FuzzRoundTrip(f *testing.F) {
 		}
 
 		compressed := buf.Bytes()
+
+		// With workers the writer cuts the same blocks and encodes them
+		// concurrently: the same file, byte for byte, however the data
+		// arrives.
+		if blockSize > 0 {
+			var par bytes.Buffer
+
+			pw, perr := NewWriter(&par, append(opts, WithWorkers(3))...)
+			if perr != nil {
+				t.Fatalf("NewWriter with workers: %s", perr)
+			}
+
+			cut := len(data) / 3
+			if _, perr = pw.Write(data[:cut]); perr != nil {
+				t.Fatalf("Write with workers: %s", perr)
+			}
+
+			if _, perr = pw.Write(data[cut:]); perr != nil {
+				t.Fatalf("Write with workers: %s", perr)
+			}
+
+			if perr = pw.Close(); perr != nil {
+				t.Fatalf("Close with workers: %s", perr)
+			}
+
+			if !bytes.Equal(par.Bytes(), compressed) {
+				t.Fatalf("with workers the file is %d bytes, not the sequential writer's %d",
+					par.Len(), len(compressed))
+			}
+		}
 
 		r, err := NewReader(bytes.NewReader(compressed))
 		if err != nil {
