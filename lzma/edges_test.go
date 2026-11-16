@@ -79,7 +79,10 @@ func TestEdgeShortCompressedChunk(t *testing.T) {
 }
 
 // TestEdgeHeaderOnlyInput: a classic stream cut inside the range coder's
-// first five bytes is a stream cut short.
+// first five bytes is a stream cut short. Five bytes that no encoder writes,
+// a first one that is not zero or a code as large as the range it starts
+// with, are ErrCorrupt, "a range coder state no encoder produces", and not
+// a stream cut short for having nothing after them.
 func TestEdgeHeaderOnlyInput(t *testing.T) {
 	t.Parallel()
 
@@ -94,6 +97,19 @@ func TestEdgeHeaderOnlyInput(t *testing.T) {
 
 	if _, err := lzma.NewReader(bytes.NewReader(stream[:lzma.HeaderLen+5])); err != nil {
 		t.Errorf("header and five bytes: %v; want a reader", err)
+	}
+
+	for _, five := range [][]byte{{1, 0, 0, 0, 0}, {0, 0xff, 0xff, 0xff, 0xff}} {
+		in := append(bytes.Clone(stream[:lzma.HeaderLen]), five...)
+
+		r, err := lzma.NewReader(bytes.NewReader(in))
+		if err == nil {
+			_, err = io.ReadAll(r)
+		}
+
+		if !errors.Is(err, lzma.ErrCorrupt) {
+			t.Errorf("header and % x: %v; want ErrCorrupt", five, err)
+		}
 	}
 }
 
