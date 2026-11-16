@@ -22,12 +22,14 @@ package lzma_test
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/forkcloser/xz/v2/internal/lzmaspec"
@@ -1216,8 +1218,8 @@ func TestContractDeclaredSize(t *testing.T) {
 // TestContractChunkRules: the chunk sequence's rules from the reader's side,
 // each sequence hand-written: the first chunk resets the dictionary, a
 // dictionary reset demands properties, an uncompressed chunk without a
-// reset continues, and the end chunk ends the sequence with nothing read
-// past it.
+// reset continues, a chunk that resets the state is decoded from a new one,
+// and the end chunk ends the sequence with nothing read past it.
 func TestContractChunkRules(t *testing.T) {
 	t.Parallel()
 
@@ -1248,6 +1250,16 @@ func TestContractChunkRules(t *testing.T) {
 
 	chunk := first[:len(first)-1]
 
+	// A chunk to stand before that one: 400 bytes, the last a line feed.
+	dataBefore := bytes.Repeat([]byte("abcabcabc\n"), 40)
+
+	before := lzma2Stream(t, dataBefore)
+	if before[0] != 0xE0 {
+		t.Fatalf("the writer's first chunk is %#x, not cLRND", before[0])
+	}
+
+	before = before[:len(before)-1]
+
 	uncompressed := append([]byte{0x02, 0x00, 0x02}, []byte("xyz")...)      // cU, 3 bytes
 	uncompressedReset := append([]byte{0x01, 0x00, 0x02}, []byte("xyz")...) // cUD, 3 bytes
 
@@ -1275,6 +1287,16 @@ func TestContractChunkRules(t *testing.T) {
 			append(append(bytes.Clone(data), []byte("xyz")...), data...),
 		},
 		{"end then more", append(bytes.Clone(first), uncompressedReset...), data},
+		// A state reset alone. The chunk's bytes were coded from a new state
+		// at the start of a stream; after 400 bytes that end in a line feed
+		// they stand where a new state reads them the same, at an offset
+		// that is a multiple of four after a byte whose top three bits are
+		// zero, and decode there only if the state is reset for them.
+		{
+			"cLRND then cLR",
+			append(append(bytes.Clone(before), markControl(chunk, 0xA0)...), 0x00),
+			append(bytes.Clone(dataBefore), data...),
+		},
 	}
 
 	for _, c := range cases {
@@ -1325,4 +1347,274 @@ func markControl(chunk []byte, control byte) []byte {
 	}
 
 	return c
+}
+
+// TestContractHandBuiltStreams: "what the reference decodes, the readers
+// decode to the same bytes", over streams the package's writer does not
+// produce on demand. Each was built operation by operation with an encoder
+// written for the purpose, which shares no code with the package; a row
+// names the operations, and the reference is the witness of the bytes they
+// decode to.
+//
+// The first two hold the state machine where its twelve states part: a
+// short repeat sends a literal state to 9 and any other to 11, a repeat to
+// 8 and to 11, and each state has probabilities of its own, so a wrong turn
+// shows in the bytes that follow.
+//
+// The others hold the range coder's normalization at its threshold. Under
+// lc 0, lp 4, pb 4 every bit of a stream's first literals meets a
+// probability that is still one half, so the range halves exactly at each:
+// it is 1<<27 after five literals, 1<<28 after four and 1<<29 after three,
+// and exactly 1<<24, the least value that takes no new byte, after the
+// third, fourth or fifth bit of the repeat that follows: the bit that says
+// whether a repeat is the last distance, a short one, the second, the third.
+// A decoder that takes a byte there has lost the stream.
+func TestContractHandBuiltStreams(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, stream, want string }{
+		{
+			"a short repeat after a match: lit a, short repeat, lit bcd, match of 2 at 3, short repeat, lit xyz",
+			"0300000100ffffffffffffffff0030e278803f7d1a2ddee16bfa2d5ffff04c3000",
+			"aabcdbcdxyz",
+		},
+		{
+			"a repeat after a literal: lit a, repeat of 2, lit bcd, match of 2 at 3, short repeat, lit xyz",
+			"0300000100ffffffffffffffff0030e8d3c803f7cf93e5fd24b9a882dffef4b400",
+			"aaabcdbcdxyz",
+		},
+		{
+			"the range at 1<<24 after the last-distance bit: lit abcde, short repeat, lit xyz",
+			"d800000100ffffffffffffffff0030988866432e1e0f27a83dfffffffc200000",
+			"abcdeexyz",
+		},
+		{
+			"the range at 1<<24 after the short-repeat bit: lit abcd, short repeat, lit xyz",
+			"d800000100ffffffffffffffff00309888664c3c1e4f507bfffffff8400000",
+			"abcddxyz",
+		},
+		{
+			"the range at 1<<24 after the second-distance bit: lit abcd, repeat of 3 at the second distance, lit xyz",
+			"d800000100ffffffffffffffff00309888664e13c1e4f507bfffffff84000000",
+			"abcddddxyz",
+		},
+		{
+			"the range at 1<<24 after the third-distance bit: lit abc, repeat of 3 at the third distance, lit xyz",
+			"d800000100ffffffffffffffff003098887e13c1e4f507bfffffff84000000",
+			"abccccxyz",
+		},
+	} {
+		stream, err := hex.DecodeString(tc.stream)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+
+		out, err := lzmaspec.Decode(stream)
+		if err != nil || string(out.Data) != tc.want || !out.Marker || out.Read != len(stream) {
+			t.Fatalf("%s: the reference: %q, %v, marker %v, %d of %d bytes read; the row says %q",
+				tc.name, out.Data, err, out.Marker, out.Read, len(stream), tc.want)
+		}
+
+		r, err := lzma.NewReader(bytes.NewReader(stream))
+		if err != nil {
+			t.Errorf("%s: NewReader: %v", tc.name, err)
+
+			continue
+		}
+
+		if got, rerr := io.ReadAll(r); rerr != nil || string(got) != tc.want {
+			t.Errorf("%s: %q, %v; the reference decodes %q", tc.name, got, rerr, tc.want)
+		}
+	}
+}
+
+// failOnce serves the first n bytes of data and fails once with err; asked
+// again, it says the input ended.
+type failOnce struct {
+	data []byte
+	n    int
+	err  error
+}
+
+func (f *failOnce) Read(p []byte) (int, error) {
+	if f.n == 0 {
+		err := f.err
+		f.err = io.EOF
+
+		return 0, err
+	}
+
+	k := copy(p[:min(len(p), f.n)], f.data)
+	f.data, f.n = f.data[k:], f.n-k
+
+	return k, nil
+}
+
+// TestContractInputEndingAtEveryByte: "An I/O error from the underlying
+// reader matches neither sentinel and is returned as it is, with one
+// exception: input that ends inside a stream, with io.EOF or an error
+// wrapping it, is reported as io.ErrUnexpectedEOF. A reader keeps what it
+// failed with: every later Read returns it." Held at every byte of a stream
+// of each kind, so in a header, a chunk header, a compressed and a stored
+// chunk, the data, the end marker and the range coder's last bytes:
+//
+//   - The input ending there is io.ErrUnexpectedEOF and neither sentinel, as
+//     the reference has it, and what is read before it is the data's start.
+//   - A source that hands over its last bytes together with io.EOF, which
+//     io.Reader allows, is read to the same bytes as one that says io.EOF
+//     after them.
+//   - A source failing there is its own error, and stays the reader's
+//     though the source would say io.EOF if asked again.
+func TestContractInputEndingAtEveryByte(t *testing.T) {
+	t.Parallel()
+
+	text := []byte("the quick brown fox jumps over the lazy dog")
+
+	// Bytes no encoder shortens, so the LZMA2 writer stores them.
+	rng := rand.New(rand.NewPCG(3, 5))
+	random := make([]byte, 3000)
+
+	for i := range random {
+		random[i] = byte(rng.Uint32())
+	}
+
+	// The text is too short for the writer to compress; four of it are not.
+	repeated := bytes.Repeat(text, 4)
+
+	// chunk is data as the writer's sequence, whose first chunk is of the
+	// kind the control byte says.
+	chunk := func(data []byte, control byte) []byte {
+		sequence := lzma2Stream(t, data)
+		if sequence[0] != control {
+			t.Fatalf("the writer's first chunk of %d bytes is %#x, want %#x", len(data), sequence[0], control)
+		}
+
+		return sequence
+	}
+
+	errSource := errors.New("source failed")
+
+	open1 := func(in io.Reader) (io.Reader, error) { return lzma.NewReader(in) }
+	open2 := func(in io.Reader) (io.Reader, error) { return lzma.NewReader2(in, defaultDict) }
+	ref1 := func(stream []byte) error {
+		_, err := lzmaspec.Decode(stream)
+
+		return err
+	}
+	ref2 := func(stream []byte) error {
+		_, err := lzmaspec.DecodeLZMA2(stream, defaultDict)
+
+		return err
+	}
+
+	// cutShort is whether err says the input ended inside the stream, and
+	// nothing else.
+	cutShort := func(err error) bool {
+		return errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, lzma.ErrCorrupt) &&
+			!errors.Is(err, lzma.ErrUnsupported)
+	}
+
+	for name, tc := range map[string]struct {
+		stream, data []byte
+		open         func(io.Reader) (io.Reader, error)
+		ref          func([]byte) error
+	}{
+		"classic, a marker": {classic(t, wcase{}, text), text, open1, ref1},
+		"classic, a size": {
+			classic(t, wcase{opts: []lzma.Option{lzma.WithSize(int64(len(text)))}}, text), text, open1, ref1,
+		},
+		"classic, a size and a marker": {
+			classic(t, wcase{opts: []lzma.Option{lzma.WithSize(int64(len(text))), lzma.WithEOSMarker()}}, text),
+			text, open1, ref1,
+		},
+		"lzma2, a compressed chunk": {chunk(repeated, 0xE0), repeated, open2, ref2},
+		"lzma2, a stored chunk":     {chunk(random, 0x01), random, open2, ref2},
+	} {
+		for n := range len(tc.stream) {
+			cut := tc.stream[:n]
+
+			if err := tc.ref(cut); !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("%s, cut at %d: the reference: %v, want io.ErrUnexpectedEOF", name, n, err)
+			}
+
+			var ended, with []byte
+
+			r, err := tc.open(bytes.NewReader(cut))
+			if err == nil {
+				ended, err = io.ReadAll(r)
+			}
+
+			if !cutShort(err) || !bytes.HasPrefix(tc.data, ended) {
+				t.Errorf("%s, cut at %d: %d bytes, %v; want the data's start and io.ErrUnexpectedEOF alone",
+					name, n, len(ended), err)
+			}
+
+			r, err = tc.open(iotest.DataErrReader(bytes.NewReader(cut)))
+			if err == nil {
+				with, err = io.ReadAll(r)
+			}
+
+			if !cutShort(err) || !bytes.Equal(with, ended) {
+				t.Errorf("%s, cut at %d, the last bytes along with io.EOF: %d bytes, %v; want the same %d and error",
+					name, n, len(with), err, len(ended))
+			}
+
+			r, err = tc.open(&failOnce{data: tc.stream, n: n, err: errSource})
+			if err == nil {
+				_, err = io.ReadAll(r)
+
+				if k, again := r.Read(make([]byte, 16)); k != 0 || !errors.Is(again, errSource) {
+					t.Errorf("%s, the source failing at %d, a later Read: %d bytes, %v; want none and its error",
+						name, n, k, again)
+				}
+			}
+
+			if !errors.Is(err, errSource) || errors.Is(err, lzma.ErrCorrupt) || errors.Is(err, lzma.ErrUnsupported) {
+				t.Errorf("%s, the source failing at %d: %v; want the source's error and neither sentinel", name, n, err)
+			}
+		}
+	}
+}
+
+// TestContractReadReturnsAtAChunksEnd: Read "returns at the end of a chunk
+// with what the chunk held, without waiting for the next one", whatever the
+// chunk held, one byte as much as many, stored or compressed. The source
+// here holds what the writer flushed and fails when asked for more, where a
+// connection would block.
+func TestContractReadReturnsAtAChunksEnd(t *testing.T) {
+	t.Parallel()
+
+	errNotYet := errors.New("the next chunk is not written yet")
+
+	for name, held := range map[string][]byte{
+		"a byte":             []byte("h"),
+		"two bytes":          []byte("hi"),
+		"a compressed chunk": bytes.Repeat([]byte("abc"), 100),
+	} {
+		var flushed bytes.Buffer
+
+		w, err := lzma.NewWriter2(&flushed)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = w.Write(held); err != nil {
+			t.Fatal(err)
+		}
+
+		if err = w.Flush(); err != nil {
+			t.Fatal(err)
+		}
+
+		r, err := lzma.NewReader2(&failAfter{data: flushed.Bytes(), n: flushed.Len(), err: errNotYet}, defaultDict)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+
+		p := make([]byte, len(held)+16)
+
+		if n, rerr := r.Read(p); rerr != nil || !bytes.Equal(p[:n], held) {
+			t.Errorf("%s: Read: %q, %v; want the chunk and no error", name, p[:n], rerr)
+		}
+	}
 }
