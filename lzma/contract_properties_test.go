@@ -178,3 +178,50 @@ func TestContractReaderAllocatesTheDictionaryLazily(t *testing.T) {
 		}
 	}
 }
+
+// TestContractDictionaryGrowsByDoubling: the dictionary "grows by doubling",
+// which keeps what a stream costs in proportion to what it decodes: 256 KiB
+// under a dictionary of 8 MiB are read within eight times their size of
+// allocations, by either reader, where they measure under twice. A
+// dictionary grown by what each operation asks for is allocated anew,
+// whole, at every one of them: hundreds of times the data here.
+//
+//nolint:paralleltest // measures the process's TotalAlloc against a budget; a parallel test's allocations would count against it
+func TestContractDictionaryGrowsByDoubling(t *testing.T) {
+	const (
+		size   = 256 << 10
+		budget = 8 * size
+	)
+
+	data := make([]byte, size)
+
+	for name, open := range map[string]func() (io.Reader, error){
+		"classic": func() (io.Reader, error) {
+			return lzma.NewReader(bytes.NewReader(classic(t, wcase{}, data)))
+		},
+		"LZMA2": func() (io.Reader, error) {
+			return lzma.NewReader2(bytes.NewReader(lzma2(t, w2case{}, data)), defaultDict)
+		},
+	} {
+		r, err := open()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+
+		var before, after runtime.MemStats
+
+		runtime.ReadMemStats(&before)
+
+		n, err := io.Copy(io.Discard, r)
+
+		runtime.ReadMemStats(&after)
+
+		if err != nil || n != size {
+			t.Fatalf("%s: %d bytes, %v", name, n, err)
+		}
+
+		if used := after.TotalAlloc - before.TotalAlloc; used > budget {
+			t.Errorf("%s: %d bytes allocated to read %d; budget is %d", name, used, size, budget)
+		}
+	}
+}

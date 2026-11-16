@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
+	"github.com/forkcloser/xz/v2/internal/lzmaspec"
 	"github.com/forkcloser/xz/v2/lzma"
 )
 
@@ -33,6 +34,46 @@ func TestEdgeShortCompressedChunk(t *testing.T) {
 		b, err := io.ReadAll(r)
 		if len(b) != 0 || !errors.Is(err, lzma.ErrCorrupt) {
 			t.Errorf("n=%d: %d bytes, %v; want 0 bytes and ErrCorrupt", n, len(b), err)
+		}
+	}
+
+	// The same after a chunk that decoded, whatever the short one resets:
+	// it is not skipped, and the sequence does not end well without it.
+	data := bytes.Repeat([]byte("abc"), 100)
+
+	decoded := lzma2Stream(t, data)
+	if decoded[0] != 0xE0 {
+		t.Fatalf("the writer's first chunk is %#x, not a compressed one", decoded[0])
+	}
+
+	decoded = decoded[:len(decoded)-1]
+
+	for _, control := range []byte{0x80, 0xA0, 0xC0, 0xE0} {
+		for n := 1; n < 5; n++ {
+			// One uncompressed byte, compressed size n, properties 0x5D where
+			// the control byte announces them.
+			in := append(bytes.Clone(decoded), control, 0x00, 0x00, 0x00, byte(n-1))
+
+			if control >= 0xC0 {
+				in = append(in, 0x5D)
+			}
+
+			in = append(in, make([]byte, n)...)
+			in = append(in, 0x00)
+
+			r, err := lzma.NewReader2(bytes.NewReader(in), 8<<20)
+			if err != nil {
+				t.Fatalf("control %#x, n=%d: NewReader2: %v", control, n, err)
+			}
+
+			b, err := io.ReadAll(r)
+			if !errors.Is(err, lzma.ErrCorrupt) || !bytes.HasPrefix(data, b) {
+				t.Errorf("control %#x, n=%d after a chunk: %d bytes, %v; want ErrCorrupt", control, n, len(b), err)
+			}
+
+			if _, refErr := lzmaspec.DecodeLZMA2(in, 8<<20); refErr == nil {
+				t.Errorf("control %#x, n=%d after a chunk: the reference decodes it", control, n)
+			}
 		}
 	}
 }
@@ -215,7 +256,7 @@ func TestEdgeEndOfInputWrapped(t *testing.T) {
 		"classic, a marker":            {classicWith(), open1},
 		"classic, a size":              {classicWith(lzma.WithSize(int64(len(text)))), open1},
 		"classic, a size and a marker": {classicWith(lzma.WithSize(int64(len(text))), lzma.WithEOSMarker()), open1},
-		"lzma2, compressed chunks":     {lzma2Stream(t, text), open2},
+		"lzma2, compressed chunks":     {lzma2Stream(t, bytes.Repeat(text, 4)), open2},
 		"lzma2, uncompressed chunks":   {lzma2Stream(t, random), open2},
 	} {
 		for n := range len(tc.stream) {
