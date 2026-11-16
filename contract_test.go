@@ -1318,6 +1318,58 @@ func TestContractDictSizeStated(t *testing.T) {
 	}
 }
 
+// miscounting takes everything it is given and reports a count of its own
+// for its first Write of anything: len(p)+delta.
+type miscounting struct {
+	delta int
+	lied  bool
+}
+
+func (w *miscounting) Write(p []byte) (int, error) {
+	if !w.lied && len(p) > 0 {
+		w.lied = true
+
+		return len(p) + w.delta, nil
+	}
+
+	return len(p), nil
+}
+
+// TestContractWriteToHoldsItsWriterToItsCount: under WriteTo, and so under
+// io.Copy, w "is held to its count": a writer that reports more than it
+// was given, less than it was given, or less than nothing, with no error,
+// ends the copy with an error and a count that is not negative, and is no
+// panic. A count 5001 under is less than nothing for every reader, the
+// in-order ones included, which hand the writer all 5000 bytes at once.
+func TestContractWriteToHoldsItsWriterToItsCount(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data, 1000))
+
+	for name, open := range readers() {
+		for _, delta := range []int{1, -1, -1001, -len(data) - 1} {
+			r, err := open(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			n, err := io.Copy(&miscounting{delta: delta}, r)
+			if err == nil || n < 0 {
+				t.Errorf("%s, a count off by %d: %d bytes copied of %d, %v", name, delta, n, len(data), err)
+			}
+
+			if delta == -1 && !errors.Is(err, io.ErrShortWrite) {
+				t.Errorf("%s, a count one short: %v, want io.ErrShortWrite", name, err)
+			}
+
+			if cerr := r.Close(); cerr != nil {
+				t.Errorf("%s: Close: %v", name, cerr)
+			}
+		}
+	}
+}
+
 // holed is a file that is whole until armed, and then serves nothing of
 // thirty bytes of itself: a read that reaches them stops short there.
 type holed struct {
