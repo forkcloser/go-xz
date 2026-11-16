@@ -197,7 +197,7 @@ You can find the full documentation on [pkg.go.dev](https://pkg.go.dev/github.co
 
 ## Security & Vulnerabilities
 
-The security policy is documented in [SECURITY.md](SECURITY.md).
+The security policy is the organization's: [how to report a vulnerability](https://github.com/forkcloser/xz/security/policy).
 
 The software is not affected by the supply chain attack on the original xz
 implementation, [CVE-2024-3094](https://www.cve.org/CVERecord?id=CVE-2024-3094).
