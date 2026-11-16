@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/forkcloser/xz/v2/internal/dictsize"
+	"github.com/forkcloser/xz/v2/internal/fullwrite"
 )
 
 // MinDictSize and MaxDictSize bound the dictionary size.
@@ -38,8 +39,9 @@ type Writer struct {
 }
 
 // NewWriter creates a writer for an LZMA stream in the classic format and
-// writes the header to lzma. Options: WithDictSize, WithProperties,
-// WithSize, WithEOSMarker.
+// writes the header to lzma, or, when lzma takes no single bytes, to the
+// buffer the writer puts before it, which goes out as it fills and at
+// Close. Options: WithDictSize, WithProperties, WithSize, WithEOSMarker.
 func NewWriter(lzma io.Writer, opts ...Option) (w *Writer, err error) {
 	o, err := apply(opts, optDictSize|optProperties|optSize|optEOSMarker, "NewWriter")
 	if err != nil {
@@ -178,7 +180,9 @@ func (w *Writer) writeHeader() error {
 		return err
 	}
 
-	_, err = w.bw.(io.Writer).Write(data)
+	// A destination that takes single bytes is written to with no bufio
+	// in between, which is what holds any other to its count.
+	_, err = fullwrite.Writer{W: w.bw.(io.Writer)}.Write(data)
 
 	return err
 }
