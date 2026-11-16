@@ -1,8 +1,10 @@
 # Performance
 
-What this fork changed for speed, what it measured, and what is left. The
-git history has the patches; this is the reference for the numbers, the
-methodology, and the negative results that should not be retried blindly.
+What was changed for speed after the fork, what it measured, and what is
+left: the record of that work, its figures as measured when it was done
+(2026-09-06). The [README](./README.md) has the current ones. The git history
+has the patches; this is the reference for the methodology and for the
+negative results that should not be retried blindly.
 
 ## Methodology
 
@@ -18,14 +20,9 @@ methodology, and the negative results that should not be retried blindly.
 - Every claimed delta is `benchstat` over `-benchtime=5x -count=6` or more;
   a "within noise" verdict means p > 0.05.
 
-Reproduce:
+`just bench` runs these benchmarks.
 
-```
-go test -run '^$' -bench 'BenchmarkWriter$|BenchmarkReader$' \
-    -benchmem -benchtime=5x -count=6 .
-```
-
-## Current state
+## State when the work was done
 
 Measured at `8cb36d8` (2026-09-06), n=6. Upstream is `github.com/ulikunitz/xz`
 v0.5.16 on the same benchmark bodies.
