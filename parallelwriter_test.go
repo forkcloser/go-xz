@@ -312,9 +312,37 @@ func TestContractWriterWithWorkersOnOneCPU(t *testing.T) {
 	}
 }
 
+// TestContractWorkersLeaveGOMAXPROCS: WithWorkers takes "0 for GOMAXPROCS":
+// the constructors read the setting and leave it as it is.
+//
+//nolint:paralleltest // sets the process's GOMAXPROCS; a parallel test would run under it
+func TestContractWorkersLeaveGOMAXPROCS(t *testing.T) {
+	// Two, so that the setting has somewhere to fall to on any machine.
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(2))
+
+	file := written(t, compressible(8<<10, 5), 0, xz.WithBlockSize(4<<10))
+
+	if _, err := xz.NewWriter(io.Discard, xz.WithWorkers(0)); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := xz.NewReader(bytes.NewReader(file), xz.WithWorkers(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := runtime.GOMAXPROCS(0); got != 2 {
+		t.Errorf("GOMAXPROCS is %d after WithWorkers(0), want the 2 it was", got)
+	}
+}
+
 // TestContractWriterWithWorkersClosed: a writer with workers is closed
 // once, like any: a second Close and a Write after Close match ErrClosed
-// and add nothing to the file.
+// and add nothing to the file, and the Write takes none of its bytes.
 func TestContractWriterWithWorkersClosed(t *testing.T) {
 	t.Parallel()
 
@@ -335,8 +363,8 @@ func TestContractWriterWithWorkersClosed(t *testing.T) {
 
 	size := file.Len()
 
-	if _, werr := w.Write([]byte("more")); !errors.Is(werr, xz.ErrClosed) {
-		t.Errorf("Write after Close: %v, want ErrClosed", werr)
+	if n, werr := w.Write([]byte("more")); n != 0 || !errors.Is(werr, xz.ErrClosed) {
+		t.Errorf("Write after Close: %d, %v, want 0 and ErrClosed", n, werr)
 	}
 
 	if cerr := w.Close(); !errors.Is(cerr, xz.ErrClosed) {
