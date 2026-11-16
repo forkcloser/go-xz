@@ -186,12 +186,18 @@ func (t *hashTable) NextOp(rep [4]uint32) operation {
 			continue
 		}
 
-		// Here comes a trick. We are only interested in matches
-		// that are longer than the matches we have been found
-		// before. So before we test the whole byte sequence at
-		// the given distance, we test the first byte that would
-		// make the match longer. If it doesn't match the byte
-		// to match, we don't to care any longer.
+		// Only a match longer than the best so far is of interest, so
+		// the byte that would make this one longer is tested first, at
+		// m.n past the candidate's start. The index is wrapped only when
+		// negative. It stays inside the buffer because the distances come
+		// in ascending order, one to eight and then the hash chain from
+		// the most recent. A candidate that starts at index 0 or later is
+		// compared no further than the buffer's physical end, so the best
+		// match, found at a shorter distance, is too short to carry the
+		// index past that end. A candidate that starts before index 0
+		// leaves the index under m.n, itself under the bytes buffered.
+		// Tried in another order, the index passes the buffer's end and
+		// the encoder panics.
 		i := t.dict.buf.rear - dist + m.n
 		if i < 0 {
 			i += len(t.dict.buf.data)

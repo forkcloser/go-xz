@@ -92,8 +92,9 @@ func NewBCJ(id uint64, startOffset uint32, encode bool) (*BCJ, error) {
 	return &BCJ{id: id, pos: startOffset, encode: encode, prevPos: startOffset - 5}, nil
 }
 
-// Lookahead is the longest tail Code may leave unconverted before the end
-// of the data: a buffer at least this long always makes progress.
+// Lookahead is the shortest buffer Code is sure to make progress on: of
+// one byte fewer it may convert none, which is the longest tail it leaves
+// unconverted before the end of the data.
 func (b *BCJ) Lookahead() int {
 	switch b.id {
 	case X86ID:
