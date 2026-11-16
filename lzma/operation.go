@@ -4,11 +4,6 @@
 
 package lzma
 
-import (
-	"fmt"
-	"unicode"
-)
-
 // operation represents an operation on the dictionary during encoding or
 // decoding. It is a value type, so that neither allocates a boxed interface
 // value for each operation.
@@ -42,20 +37,4 @@ func matchOp(distance int64, n int) operation {
 // Len returns the number of bytes represented by the operation.
 func (o operation) Len() int {
 	return o.n
-}
-
-// String returns a string representation for the operation.
-func (o operation) String() string {
-	if o.literal {
-		var c byte
-		if unicode.IsPrint(rune(o.b)) {
-			c = o.b
-		} else {
-			c = '.'
-		}
-
-		return fmt.Sprintf("L{%c/%02x}", c, o.b)
-	}
-
-	return fmt.Sprintf("M{%d,%d}", o.distance, o.n)
 }

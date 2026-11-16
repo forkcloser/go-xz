@@ -20,12 +20,6 @@ const probInit prob = 1 << (probbits - 1)
 //nolint:recvcheck // a 16-bit probability: read by value, updated in place
 type prob uint16
 
-// Bits returns 1. One is the number of bits that can be encoded or decoded
-// with a single prob value.
-func (prob) Bits() int {
-	return 1
-}
-
 // Encode encodes the least-significant bit of v. Note that the p value will be
 // changed.
 func (p *prob) Encode(e *rangeEncoder, v uint32) error {
