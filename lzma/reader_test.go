@@ -21,9 +21,9 @@ import (
 func TestNewReader(t *testing.T) {
 	t.Parallel()
 
-	f, err := os.Open("examples/a.lzma")
+	f, err := os.Open("testdata/examples/a.lzma")
 	if err != nil {
-		t.Fatalf("open examples/a.lzma: %s", err)
+		t.Fatalf("open testdata/examples/a.lzma: %s", err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -34,7 +34,7 @@ func TestNewReader(t *testing.T) {
 }
 
 const (
-	dirname  = "examples"
+	dirname  = "testdata/examples"
 	origname = "a.txt"
 )
 
@@ -98,7 +98,7 @@ func TestReaderSimple(t *testing.T) {
 func TestReaderAll(t *testing.T) {
 	t.Parallel()
 
-	dirname := "examples"
+	dirname := "testdata/examples"
 
 	dir, err := os.Open(dirname)
 	if err != nil {
@@ -137,15 +137,15 @@ func TestReaderAll(t *testing.T) {
 }
 
 func Example_reader() {
-	f, err := os.Open("fox.lzma")
+	f, err := os.Open("testdata/fox.lzma")
 	if err != nil {
-		slog.Error("open fox.lzma", "err", err)
+		slog.Error("open testdata/fox.lzma", "err", err)
 
 		return
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			slog.Error("close fox.lzma", "err", cerr)
+			slog.Error("close testdata/fox.lzma", "err", cerr)
 		}
 	}()
 
@@ -227,7 +227,7 @@ func TestReaderWrap(t *testing.T) {
 func TestReaderBadFiles(t *testing.T) {
 	t.Parallel()
 
-	dirname := "examples"
+	dirname := "testdata/examples"
 
 	dir, err := os.Open(dirname)
 	if err != nil {
@@ -395,7 +395,7 @@ func TestReaderErrAgain(t *testing.T) {
 func TestMinDictSize(t *testing.T) {
 	t.Parallel()
 
-	const file = "examples/a.txt"
+	const file = "testdata/examples/a.txt"
 
 	uncompressed, err := os.ReadFile(file)
 	if err != nil {
@@ -445,10 +445,10 @@ func TestZeroPrefixIssue(t *testing.T) {
 	t.Parallel()
 
 	files := []string{
-		"examples/a.lzma",
-		"examples/a_lp1_lc2_pb1.lzma",
-		"examples/a_eos_and_size.lzma",
-		"fox.lzma",
+		"testdata/examples/a.lzma",
+		"testdata/examples/a_lp1_lc2_pb1.lzma",
+		"testdata/examples/a_eos_and_size.lzma",
+		"testdata/fox.lzma",
 	}
 
 	zeroPrefix := []byte{0}
