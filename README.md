@@ -1,208 +1,286 @@
-# Package xz
+# xz
 
-This Go language package supports the reading and writing of xz
-compressed streams. The package is completely written in Go and doesn't
-have any dependency on any C code. The command-line tool built on it is
+The [`.xz` file format](https://tukaani.org/xz/xz-file-format.txt) for
+Go, read and written, with the classic `.lzma` format and raw LZMA2 beside
+it: pure Go, with no dependency and no cgo. The reader decodes every filter
+the format defines, and both reader and writer work on several blocks of a
+file at once.
+
+This module began as a fork of
+[ulikunitz/xz](https://github.com/ulikunitz/xz). What was taken from
+upstream, what was changed, and where the two have since parted is recorded
+in [UPSTREAM.md](./UPSTREAM.md); from v2 the API is this module's own. The
+command-line tool built on it is
 [forkcloser/compress](https://github.com/forkcloser/compress)'s `xz`.
 
-Compression speed and ratio do not match the xz tool, whose algorithms
-have been tuned over a long time. Decompression is a different story: see
-the numbers below, and `WithWorkers` for block-parallel decoding of
-multi-block files. The reader decodes every filter the format defines:
-LZMA2, the eight branch/call/jump filters (x86, PowerPC, IA-64, ARM, ARM
-Thumb, SPARC, ARM64, RISC-V) and delta, in chains of up to four, so what
-`xz --x86` or `xz --delta` wrote reads here, and the writer applies them
-on request (`WithFilters`).
+## Install
 
-```go
-r, err := xz.NewReader(f, xz.WithWorkers(0))            // all CPUs on a multi-block file
-w, err := xz.NewWriter(out, xz.WithBlockSize(1<<24), xz.WithCheck(xz.CheckSHA256))
-w, err = xz.NewWriter(out, xz.WithWorkers(0))            // all CPUs, in the blocks xz -T cuts
+```
+go get github.com/forkcloser/xz/v2
 ```
 
-## Stability
+Go 1.26 or later. The module requires nothing but the standard library.
 
-The module is `github.com/forkcloser/xz/v2`. From v2.0.0 the exported API
-of `xz` and `lzma` follows the Go 1 compatibility promise within the v2
-line: no exported name changes meaning or disappears, and code that
-compiles against v2.0.0 keeps compiling. Additive changes (new options, new
-functions) can land in minor releases. `internal/` is not covered, and
-neither is the exact text of error messages — match errors with
-`errors.Is` against `ErrCorrupt`, `ErrUnsupported`, `ErrClosed`,
-`io.ErrUnexpectedEOF` and the `lzma` package's `ErrCorrupt`,
-`ErrUnsupported` and `ErrSizeExceeded`, not by string. The minimum Go
-version is the one in `go.mod`; CI runs the current release.
+## Packages
 
-The v1 line (`github.com/forkcloser/xz`) is what v2 replaces: configuration
-structs with a `Verify` that mutated them, a `DictCap` that meant a floor
-in one reader and a limit in another, a separate `ParallelReader`, and a
-check selected by a wire byte that could not say "none". v2 configures
-readers and writers with options, has one `Reader` whose `WithWorkers`
-decodes blocks concurrently, bounds a reader's dictionary with
-`WithMaxDictSize`, and selects the check and the filters by name.
+| Package | What it is |
+| --- | --- |
+| `xz` | `.xz` files: one `Reader` and one `Writer`, configured by options. |
+| `lzma` | The classic `.lzma` format (`Reader`, `Writer`) and the LZMA2 chunk sequence a `.xz` block carries (`Reader2`, `Writer2`). |
 
-## Assurance
-
-The `lzma` package is held to a port of the LZMA SDK's reference decoder
-(`internal/lzmaspec`, public domain, with liblzma's LZMA2 chunk rules) that
-shares no code with it: the contract tests check what the writers produce
-against it and what the readers decode and refuse against its verdict, over
-every byte flipped and every truncation of a corpus of streams, and the
-bounded tests walk every input length around the dictionary, buffer and
-chunk sizes through both. The inherited round-trip and classification tests
-retired under a mutation score: of 494 single-point mutants of the decoding
-sources, the new suite kills 404; the survivors are comparisons at an
-equality the corpus never reaches, dead and error-path code, encoder
-arithmetic no stream exercises, and the dictionary's growth internals, which
-the white-box tests keep. Fuzz targets hold both readers to the reference on
-arbitrary bytes.
-
-The `.xz` container is held the same way to a reference written from the
-file format specification (`reference_test.go`), which decodes its payload
-with that port: what the writer produces parses under it with the check
-type, the sizes and the block count asked for; what it writes decodes under
-both readers across every check type, with and without sizes, one block,
-several, none, several streams, with padding longer than any read buffer and
-blocks ending exactly where the index starts; and over every byte flipped,
-every byte zeroed and every truncation of a corpus of files, both readers
-follow its verdict, as does the fuzz target seeded from it. Of 582 mutants
-of the container's sources, the suite kills 396 (the whole test suite of
-the repository, 409); the survivors are the count returned beside an error,
-capacities and buffer sizes, header fields the writer never emits (block
-sizes, several filters), bounds a nine-byte integer cannot reach, and
-equalities the format rules out.
-
-The reader and the classic LZMA reader also run XZ Utils' own decoder
-conformance files (`testdata/xzutils`, upstream's `tests/files`, 0BSD): every
-good `.xz` and `.lzma` file decodes, with the reader with and without
-workers agreeing byte for byte; every bad file is refused as corrupt or cut short;
-every file upstream classes as unsupported is refused, never decoded.
-
-The BCJ and delta filters (`internal/filters`) are held to XZ Utils: for
-each filter, with and without a start offset, for two chains and for a
-multi-block file, a committed file is what `xz` makes of one fixed input,
-regenerated from its seed, and the reader must decode it back with and
-without workers
-(`testdata/filters`, `filters_test.go`), through reads of every small size.
-The converters are also held to themselves: each direction undoes the other
-over random and instruction-dense inputs, at several start offsets, and
-converts the same bytes whatever the chunk sizes it sees them in.
-
-## About this fork
-
-This here is a friendly fork of https://github.com/ulikunitz/xz, taken at
-upstream v0.5.15. What a user migrating from upstream will notice, every fix
-and feature this fork has that upstream does not, is the table in
-[`UPSTREAM.md`](./UPSTREAM.md), beside the fork point and what was taken from
-upstream since; the [releases](https://github.com/forkcloser/xz/releases)
-carry the notes.
-
-Upstream is not dormant — but its `master` is. Development moved to the `v2`
-branch, which is a *different module*: `github.com/ulikunitz/xz/v2`, in a
-`v2/` subdirectory, built on the separate `github.com/ulikunitz/lz` match
-finder, replacing the v0.5 API with configuration structs, presets, and
-JSON-marshallable reader and writer configs. It carries tags `v2.0.0-dev.1`
-through `v2.0.0-dev.4` (October–December 2025) and has run 48 commits past
-the last of them; `v0.6.0-last-dev` marks where the v0.x line stopped.
-Because v2 takes the `/v2` import path, it does not supersede
-`github.com/ulikunitz/xz` for anyone importing that today — and that is the
-line this fork continues. `master` still takes occasional maintenance: its
-last commit is 2026-07-20 and the `v2` branch was last pushed 2026-08-02,
-both checked 2026-09-07. If you would rather carry these changes upstream
-than depend on a fork, they apply to `master`; please do.
-
-### Benchmarks
-
-Measured on `testdata/enwik7` (10 MB of Wikipedia text), Apple M5 Pro,
-Go 1.26, 2026-09-06. Upstream is `github.com/ulikunitz/xz` v0.5.16 on
-the same benchmark bodies. Reproduce with:
-
-    go test -run '^$' -bench 'Reader|Writer' -benchmem -benchtime=5x -count=6 .
-
-| Benchmark           | Upstream v0.5.16 | This fork | Change |
-| ------------------- | ---------------- | --------- | ------ |
-| Reader (decompress) | 48.6 MB/s        | ~102 MB/s | 2.1×   |
-| Reader allocs/op    | 1,213,036        | 132       | −99.99% |
-| Writer (compress)   | 14.1 MB/s        | ~15 MB/s  | +9%    |
-| Writer allocs/op    | 1,217,288        | 306       | −99.97% |
-
-[`PERF.md`](./PERF.md) has the methodology, what each change bought, the
-negative results, and what is left.
-
-A writer with `WithWorkers` encodes blocks concurrently and writes the
-file a writer without workers writes at the same block size, byte for
-byte. On 10 MB of that corpus in blocks of 1 MiB, on 18 CPUs: 21 MB/s with
-no workers, 34 with two, 53 with four, 99 with all of them. Each block
-being encoded is held in memory with what it compresses to.
-
-Multi-block files (the shape `xz -T` produces, and the one `WithWorkers`
-exists for), same corpus:
-
-| Benchmark                                | Throughput | Allocs/op |
-| ---------------------------------------- | ---------- | --------- |
-| Reader, 153 × 64 KiB blocks, 1 worker   | 73 MB/s    | 2,576     |
-| Reader, 10 × 1 MiB blocks, 18 workers   | 700 MB/s   | ~1,265    |
-| Reader, 153 × 64 KiB blocks, 18 workers | ~980 MB/s  | —         |
-
-Compression ratio is identical to upstream in the default
-configuration. Multi-block serial decoding is slower than single-block
-per byte because each block restarts the dictionary; that cost is
-intrinsic to the format, not to this implementation.
-
-
-## Using the API
-
-The following example program shows how to use the API.
+## Reading
 
 ```go
-package main
+f, err := os.Open(name)
+if err != nil {
+	return err
+}
+defer f.Close()
 
-import (
-    "bytes"
-    "io"
-    "log"
-    "os"
+r, err := xz.NewReader(f, xz.WithWorkers(0)) // 0: as many blocks at once as GOMAXPROCS
+if err != nil {
+	return err
+}
+defer r.Close()
 
-    "github.com/forkcloser/xz/v2"
-)
-
-func main() {
-    const text = "The quick brown fox jumps over the lazy dog.\n"
-    var buf bytes.Buffer
-    // compress text
-    w, err := xz.NewWriter(&buf)
-    if err != nil {
-        log.Fatalf("xz.NewWriter error %s", err)
-    }
-    if _, err := io.WriteString(w, text); err != nil {
-        log.Fatalf("WriteString error %s", err)
-    }
-    if err := w.Close(); err != nil {
-        log.Fatalf("w.Close error %s", err)
-    }
-    // decompress buffer and write output to stdout
-    r, err := xz.NewReader(&buf)
-    if err != nil {
-        log.Fatalf("NewReader error %s", err)
-    }
-    if _, err = io.Copy(os.Stdout, r); err != nil {
-        log.Fatalf("io.Copy error %s", err)
-    }
+if _, err := io.Copy(dst, r); err != nil {
+	return err
 }
 ```
 
-## Documentation
+A `Reader` reads a whole file: one stream or several, concatenated with or
+without padding between them. `WithSingleStream` makes it read one stream and
+report anything after it as corruption. It decodes LZMA2, the eight
+branch/call/jump filters (x86, PowerPC, IA-64, ARM, ARM Thumb, SPARC, ARM64,
+RISC-V) and delta, in chains of up to four, under the None, CRC32, CRC64 and
+SHA-256 checks.
 
-You can find the full documentation on [pkg.go.dev](https://pkg.go.dev/github.com/forkcloser/xz/v2), or with `go doc github.com/forkcloser/xz/v2`.
+With workers, blocks decode concurrently when the input is an `io.ReaderAt`
+that is also an `io.Seeker`, as a file is, and the file has two blocks or
+more. Anything else decodes in order on one worker: a stream, a file of one
+block, a reader of a single stream. Workers change how fast a file is read
+and what it costs in memory, not the data: a reader with workers holds whole
+decoded blocks, about twice the workers plus a few of them, and must be
+closed when abandoned before `io.EOF`.
 
-## Security & Vulnerabilities
+The error `Read` returns is classified, to be matched with `errors.Is`:
 
-The security policy is the organization's: [how to report a vulnerability](https://github.com/forkcloser/xz/security/policy).
+| Error | What it says |
+| --- | --- |
+| `io.EOF` | The file has ended, and was whole. |
+| `xz.ErrCorrupt` | The input is not a valid `.xz` file: bad magic, a failed check, sizes that disagree, a reserved field that is set. |
+| `xz.ErrUnsupported` | The input may be well formed and this package does not decode it: a check or a filter the format reserves, a dictionary above `WithMaxDictSize`. |
+| `io.ErrUnexpectedEOF` | The input ends inside a stream. |
+| `xz.ErrClosed` | The reader was closed before it had ended or failed. |
+| any other | The underlying reader's own error, as it is. |
 
-The software is not affected by the supply chain attack on the original xz
-implementation, [CVE-2024-3094](https://www.cve.org/CVERecord?id=CVE-2024-3094).
-This implementation doesn't share any files with the original xz implementation
-and no patches or pull requests are accepted without a review.
+`WriteTo` returns the same, nil where `Read` returns `io.EOF`, and besides
+them the error of the writer it is given, which it holds to its count: a
+write that takes less than it was given with no error is `io.ErrShortWrite`.
+An option a constructor refuses matches none of the sentinels.
 
-All security advisories for this project are published under
-[github.com/forkcloser/xz/security/advisories](https://github.com/forkcloser/xz/security/advisories?state=published).
+The first error is final: every later `Read` returns it, `io.EOF` included.
+`Read` may return data beside an error; beside one that reports corrupt or
+cut input, the data is to be discarded, not taken for a correct prefix.
+
+The dictionary is allocated as the data fills it, never at the size a header
+declares. `WithMaxDictSize` refuses a block that asks for a larger dictionary
+than a reader of untrusted input wants to allow. It does not bound the whole
+decoded blocks a reader with workers holds.
+
+## Writing
+
+```go
+w, err := xz.NewWriter(dst)
+if err != nil {
+	return err
+}
+
+if _, err := io.Copy(w, src); err != nil {
+	return err
+}
+
+if err := w.Close(); err != nil { // the last block, the index and the footer
+	return err
+}
+```
+
+| Option | What it sets | Default |
+| --- | --- | --- |
+| `WithCheck` | The integrity check of every block: `CheckNone`, `CheckCRC32`, `CheckCRC64`, `CheckSHA256`. | CRC64 |
+| `WithDictSize` | The dictionary size, `lzma.MinDictSize` to `lzma.MaxDictSize`. | 8 MiB |
+| `WithProperties` | The literal context bits, literal position bits and position bits. | 3, 0, 2 |
+| `WithBlockSize` | A new block every so many uncompressed bytes. | one block |
+| `WithFilters` | Up to three of the BCJ filters and delta, applied before LZMA2. | none |
+| `WithWorkers` | How many blocks are encoded at once, 0 for GOMAXPROCS. | 1 |
+
+```go
+w, err := xz.NewWriter(dst,
+	xz.WithWorkers(0),
+	xz.WithCheck(xz.CheckSHA256),
+	xz.WithFilters(xz.Filter{ID: xz.ARM64}), // for arm64 machine code
+)
+```
+
+A writer given workers cuts the data into blocks of `WithBlockSize`, or
+without it of three times the dictionary size and at least 1 MiB, as `xz -T`
+does, and encodes that many at once. The file is the one a writer without
+workers writes at that block size, byte for byte, whatever the number of
+workers. Each block being encoded is held in memory with what it compresses
+to.
+
+The first error from the underlying writer is final, and the stream cannot
+be completed after it. A `Writer` is for one goroutine at a time, with
+workers too.
+
+## Classic LZMA and LZMA2
+
+```go
+r, err := lzma.NewReader(src)                    // a .lzma file
+w, err := lzma.NewWriter(dst, lzma.WithSize(n))  // the header states the size
+
+r2, err := lzma.NewReader2(src, dictSize)        // the LZMA2 chunks of a container
+w2, err := lzma.NewWriter2(dst)
+```
+
+Without `WithSize` a classic writer leaves the size unknown and ends the
+stream with a marker. `Writer2` buffers: `Flush` or `Close` writes what it
+holds.
+
+The `.lzma` format has no magic, so `lzma.NewReader` cannot tell a header
+from other bytes, and what is not one may declare any dictionary and any
+size. The dictionary is allocated as the data fills it; `WithMaxDictSize`
+refuses a header that declares more than the caller allows; and
+`Reader.Header` returns what a header declared. `lzma.ValidHeader` is a
+heuristic for telling the format of a file, not a check of it.
+
+The package's errors are its own: `lzma.ErrCorrupt` and `lzma.ErrUnsupported`
+as in `xz`, and `lzma.ErrSizeExceeded` for a write beyond the size a classic
+header declared.
+
+## Migrating from v1
+
+v1 is `github.com/forkcloser/xz`, through v1.1.2. The formats are the
+standard ones in both. `xz.NewReader(r)`, `xz.NewWriter(w)` and their `lzma`
+counterparts compile unchanged but for `lzma.NewReader2`; the configuration
+structs and their `Verify` are gone, and a constructor returns the error an
+option earns.
+
+| v1 | v2 |
+| --- | --- |
+| `import "github.com/forkcloser/xz"`, `.../lzma` | `import "github.com/forkcloser/xz/v2"`, `.../v2/lzma` |
+| `xz.ReaderConfig{SingleStream: true}.NewReader(r)` | `xz.NewReader(r, xz.WithSingleStream())` |
+| `xz.ReaderConfig{DictCap: n}`, a floor | nothing: the dictionary is what each block asks for. `xz.WithMaxDictSize(n)` is a limit, which v1 did not have |
+| `xz.NewParallelReader(ra, size)` | `xz.NewReader(io.NewSectionReader(ra, 0, size), xz.WithWorkers(0))`; a file is passed as it is |
+| `xz.ParallelReaderConfig{Workers: n}.NewParallelReader(ra, size)` | the same with `xz.WithWorkers(n)`; a count below zero is refused |
+| `(*xz.ParallelReader).Size()` | no counterpart |
+| `xz.WriterConfig{Properties: &lzma.Properties{LC: lc, LP: lp, PB: pb}}` | `xz.WithProperties(lc, lp, pb)` |
+| `xz.WriterConfig{DictCap: n}` | `xz.WithDictSize(n)` |
+| `xz.WriterConfig{BlockSize: n}` | `xz.WithBlockSize(n)` |
+| `xz.WriterConfig{CheckSum: xz.SHA256}`; `xz.None`, `xz.CRC32`, `xz.CRC64`, `xz.SHA256` | `xz.WithCheck(xz.CheckSHA256)`; `xz.CheckNone`, `xz.CheckCRC32`, `xz.CheckCRC64`, `xz.CheckSHA256` |
+| `xz.WriterConfig{NoCheckSum: true}` | `xz.WithCheck(xz.CheckNone)` |
+| `BufSize`, `Matcher`, `lzma.MatchAlgorithm` | gone: there is one match finder, and its buffer is not a setting |
+| `lzma.ReaderConfig{DictCap: n}.NewReader(r)`, refusing with `*lzma.ErrDictSize` | `lzma.NewReader(r, lzma.WithMaxDictSize(n))`, refusing with `lzma.ErrUnsupported` |
+| `h, ok := r.Header()` on a `lzma.Reader` | `h := r.Header()` |
+| `(*lzma.Reader).EOSMarker()` | no counterpart |
+| `lzma.NewReader2(r)`, `lzma.Reader2Config{DictCap: n}.NewReader2(r)` | `lzma.NewReader2(r, n)`: the dictionary size is required |
+| `(*lzma.Reader2).DictCap()` | `(*lzma.Reader2).DictSize()` |
+| `lzma.WriterConfig{SizeInHeader: true, Size: n}` | `lzma.WithSize(n)` |
+| `lzma.WriterConfig{EOSMarker: true}` | `lzma.WithEOSMarker()` |
+| `lzma.WriterConfig` and `lzma.Writer2Config`'s `Properties`, `DictCap` | `lzma.WithProperties(lc, lp, pb)`, `lzma.WithDictSize(n)` |
+| `lzma.MinDictCap`, `lzma.MaxDictCap` | `lzma.MinDictSize`, `lzma.MaxDictSize` |
+| `lzma.ErrNoSpace` | `lzma.ErrSizeExceeded` |
+| `lzma.ByteReader`, `lzma.EncodeDictCap`, `lzma.DecodeDictCap` | gone |
+
+What a call that still compiles does differently is in the notes of the
+[releases](https://github.com/forkcloser/xz/releases), the breaking changes
+under their own heading.
+
+## Performance
+
+`just bench` runs the benchmarks; the eight below are medians of six runs,
+on 2026-11-15: an Apple M5 Pro (18 cores), macOS, Go 1.27.4. The corpus is `testdata/enwik7`,
+10 MB of English Wikipedia text; MB/s is decimal and counts uncompressed
+bytes. Half the range over the median is under 3% for the readers and under
+8% for the writers.
+
+| Benchmark | What it runs | MB/s |
+| --- | --- | ---: |
+| `Reader` | one block, read in order | 99 |
+| `ParallelReader/workers=1` | ten blocks of 1 MiB, one worker | 96 |
+| `ParallelReader/workers=4` | the same, four workers | 305 |
+| `ParallelReader/workers=all` | the same, a worker a CPU | 730 |
+| `Writer` | one block, the defaults | 12.6 |
+| `WriterWorkers/workers=1` | blocks of 1 MiB, one worker | 19.1 |
+| `WriterWorkers/workers=4` | the same, four workers | 43.6 |
+| `WriterWorkers/workers=all` | the same, a worker a CPU | 86.9 |
+
+One block compresses the corpus to 33.6% of its size, blocks of 1 MiB to
+34.5%: each block starts a dictionary of its own. Reading the one-block file
+allocates 126 times, 20 MB in all, most of it the dictionary as it grows.
+
+[PERF.md](./PERF.md) records how the decoder got to this speed: what each
+change bought, what was tried and did not work, and where the time goes.
+
+## Correctness
+
+The decoders are held to references that share no code with them: the `lzma`
+package to a port of the LZMA SDK's reference decoder with liblzma's LZMA2
+chunk rules (`internal/lzmaspec`), the container to a reader and writer made
+from the file format specification (`reference_test.go`).
+
+The package is also held to XZ Utils itself, a pinned build of 5.8.4 that
+`just test` fetches and requires, on each platform's CI leg. What the writers write
+must pass `xz -t` and decode under `xz -dc` to the input; what `xz` writes,
+with every preset, check, block layout, filter and format, the readers must
+decode to the input; and on a stream with one byte flipped, the package
+accepts what `xz` accepts and refuses what it refuses. XZ Utils' decoder
+conformance files (`testdata/xzutils`) run too: a good file decodes, a bad
+one is refused, and one upstream classes as unsupported is never decoded.
+A differential test against ulikunitz/xz (`internal/upstreamdiff`, a module
+of its own, so the library never depends on upstream) holds that what either
+side compresses the other decompresses to the same bytes, and that this
+module refuses whatever upstream refuses.
+
+Nine fuzz targets drive the readers, the classic and LZMA2 decoders and the
+round trips, on every CI run, and the race detector runs the suite. The
+suite runs on Linux (amd64, arm64), Windows (amd64, arm64) and macOS
+(arm64).
+
+## Limitations
+
+- The encoder has one match finder and no presets, and does not match XZ
+  Utils. On the corpus above, against XZ Utils 5.8.4 on one thread on the
+  same machine: this package writes 33.6% of the input in 0.79 s; `xz -1`
+  writes 33.4% in 0.32 s, and `xz -6`, its default, 27.2% in 3.8 s. XZ Utils
+  decodes the one-block file in 0.08 s, this package in 0.10 s.
+- A block decodes on one core, as the format has it: workers need a file of
+  several blocks, and an input they can read by offset.
+- A reader with workers holds whole decoded blocks in memory, and a writer
+  with workers whole blocks with what they compress to. Neither is bounded by
+  the dictionary size.
+- A `Reader` reads a file from its start. It is not an `io.Seeker`, though a
+  file's index would let a block be reached by its offset.
+- No 32-bit target is tested.
+
+## Development
+
+Every task runs through `just`: `just lint` and `just test` are the whole
+gate. `just test` fetches the pinned XZ Utils binary for the host on its
+first run, into `.build`, and runs the differential test against upstream,
+`just test-upstreamdiff`, which fetches upstream's module. `just bench` runs
+the benchmarks. The tooling is the organization's; see
+[CONTRIBUTING](https://github.com/forkcloser/.github/blob/main/.github/CONTRIBUTING.md).
+
+## Security
+
+Report a vulnerability as the organization's
+[SECURITY](https://github.com/forkcloser/.github/blob/main/.github/SECURITY.md)
+policy says. This module is not XZ Utils and builds none of it, so
+[CVE-2024-3094](https://www.cve.org/CVERecord?id=CVE-2024-3094), the backdoor
+in the XZ Utils 5.6.0 and 5.6.1 releases, does not concern it; the tests run
+an XZ Utils binary as an oracle, and the library never does.
+
+## License
+
+[BSD 3-Clause](./LICENSE).

@@ -5,7 +5,7 @@
 // Package xz supports the compression and decompression of xz files.
 //
 // The container format is the one described by the xz file format
-// specification (https://xz.tukaani.org/format/xz-file-format.txt): stream
+// specification (https://tukaani.org/xz/xz-file-format.txt): stream
 // header and footer, blocks, index, stream padding and multi-stream files,
 // with the None, CRC32, CRC64 and SHA-256 checks, and every filter the
 // format defines: LZMA2, the eight branch/call/jump filters (x86, PowerPC,

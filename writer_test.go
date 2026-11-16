@@ -269,3 +269,45 @@ func BenchmarkWriter(b *testing.B) {
 
 	b.ReportMetric(float64(buf.Len())/float64(len(data)), "rate")
 }
+
+// BenchmarkWriterWorkers compresses testdata/enwik7 in blocks of 1 MiB with
+// one worker, with four, and with as many as GOMAXPROCS.
+func BenchmarkWriterWorkers(b *testing.B) {
+	const testFile = "testdata/enwik7"
+
+	data, err := os.ReadFile(testFile)
+	if err != nil {
+		b.Fatalf("os.ReadFile(%q) error %s", testFile, err)
+	}
+
+	for _, bench := range []struct {
+		name    string
+		workers int
+	}{{"workers=1", 1}, {"workers=4", 4}, {"workers=all", 0}} {
+		b.Run(bench.name, func(b *testing.B) {
+			buf := new(bytes.Buffer)
+
+			b.SetBytes(int64(len(data)))
+			b.ReportAllocs()
+
+			for b.Loop() {
+				buf.Reset()
+
+				w, err := xz.NewWriter(buf, xz.WithBlockSize(1<<20), xz.WithWorkers(bench.workers))
+				if err != nil {
+					b.Fatalf("NewWriter(buf) error %s", err)
+				}
+
+				if _, err = w.Write(data); err != nil {
+					b.Fatalf("w.Write(data) error %s", err)
+				}
+
+				if err = w.Close(); err != nil {
+					b.Fatalf("w.Close() error %s", err)
+				}
+			}
+
+			b.ReportMetric(float64(buf.Len())/float64(len(data)), "rate")
+		})
+	}
+}

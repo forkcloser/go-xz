@@ -307,14 +307,22 @@ func BenchmarkReaderMultiBlock(b *testing.B) {
 	})
 }
 
-// BenchmarkParallelReader decodes a multi-block file with all workers.
+// BenchmarkParallelReader decodes testdata/enwik7 in ten blocks of 1 MiB with
+// one worker, with four, and with as many as GOMAXPROCS.
 func BenchmarkParallelReader(b *testing.B) {
-	benchmarkBlocks(b, 1<<20, func(xz []byte) (io.Reader, func()) {
-		r, err := NewReader(bytes.NewReader(xz), WithWorkers(4))
-		if err != nil {
-			b.Fatalf("NewReader error %s", err)
-		}
+	for _, bench := range []struct {
+		name    string
+		workers int
+	}{{"workers=1", 1}, {"workers=4", 4}, {"workers=all", 0}} {
+		b.Run(bench.name, func(b *testing.B) {
+			benchmarkBlocks(b, 1<<20, func(xz []byte) (io.Reader, func()) {
+				r, err := NewReader(bytes.NewReader(xz), WithWorkers(bench.workers))
+				if err != nil {
+					b.Fatalf("NewReader error %s", err)
+				}
 
-		return r, func() { _ = r.Close() }
-	})
+				return r, func() { _ = r.Close() }
+			})
+		})
+	}
 }
