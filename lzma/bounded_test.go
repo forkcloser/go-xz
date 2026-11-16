@@ -194,6 +194,101 @@ func TestBoundedLZMA2Compressible(t *testing.T) {
 	}
 }
 
+// bothFormats holds a writer's streams of data, classic and LZMA2 under
+// the smallest dictionary, to the reference and to the readers, which read
+// them in pieces of each of sizes.
+func bothFormats(t *testing.T, what string, data []byte, sizes ...int) {
+	t.Helper()
+
+	smallest := []lzma.Option{lzma.WithDictSize(lzma.MinDictSize)}
+	stream := classic(t, wcase{opts: smallest}, data)
+	sequence := lzma2(t, w2case{opts: smallest}, data)
+
+	out, err := lzmaspec.Decode(stream)
+	if err != nil || !bytes.Equal(out.Data, data) {
+		t.Fatalf("%s: the reference: %d bytes, %v", what, len(out.Data), err)
+	}
+
+	got, err := lzmaspec.DecodeLZMA2(sequence, lzma.MinDictSize)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("%s, lzma2: the reference: %d bytes, %v", what, len(got), err)
+	}
+
+	for _, size := range sizes {
+		r, err := lzma.NewReader(bytes.NewReader(stream))
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+
+		if got, err = readBy(r, size); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s, reads of %d: %d of %d bytes, %v", what, size, len(got), len(data), err)
+		}
+
+		r2, err := lzma.NewReader2(bytes.NewReader(sequence), lzma.MinDictSize)
+		if err != nil {
+			t.Fatalf("%s, lzma2: %v", what, err)
+		}
+
+		if got, err = readBy(r2, size); err != nil || !bytes.Equal(got, data) {
+			t.Errorf("%s, lzma2, reads of %d: %d of %d bytes, %v", what, size, len(got), len(data), err)
+		}
+	}
+}
+
+// TestBoundedRunsOfTheDictionarySize: runs of one byte, each as long as
+// the dictionary and a byte either side of it. A run is a literal and then
+// matches of the longest length, 273 bytes: a run of 4096 is one and
+// fifteen, which a reader that had emptied its window decodes into it up
+// to the window's last byte, the one place where a full window follows an
+// empty one with nothing read between. The next run is then decoded into
+// a window that has no room, and every byte must still come out, in reads
+// of a byte, of a prime, of the window and of more than everything.
+func TestBoundedRunsOfTheDictionarySize(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range around(lzma.MinDictSize) {
+		data := make([]byte, 0, 4*n)
+		for _, c := range []byte("abcd") {
+			data = append(data, bytes.Repeat([]byte{c}, n)...)
+		}
+
+		bothFormats(t, "runs of "+itoa(n), data, 1, 7, lzma.MinDictSize, 1<<20)
+	}
+}
+
+// TestBoundedLiteralAfterTheLongestMatch: a block of 273 bytes, the
+// longest match, comes twice, each time followed by the same byte. The
+// match of the second block ends at its limit and not at a difference, so
+// the byte after it is a literal coded against the byte the match would
+// have gone on with, which is that very byte: all eight of its bits agree
+// with the match byte, a path a literal after a match otherwise leaves at
+// its first difference. Held for the bytes at the ends of the range, zero
+// among them, whose symbol ends the walk at the tree's first leaf.
+func TestBoundedLiteralAfterTheLongestMatch(t *testing.T) {
+	t.Parallel()
+
+	rng := rand.New(rand.NewPCG(273, 1))
+
+	for _, b := range []byte{0x00, 0x01, 0x7f, 0x80, 0xff} {
+		// No byte of the block is b, so nothing near the literal matches it.
+		block := make([]byte, 273)
+		for i := range block {
+			block[i] = byte(2 + rng.Uint32()%0x7d)
+		}
+
+		var data []byte
+
+		data = append(data, block...)
+		data = append(data, b)
+		data = append(data, "the block again:"...)
+		data = append(data, block...)
+		data = append(data, b)
+		data = append(data, "and the end"...)
+
+		bothFormats(t, "a literal "+itoa(int(b))+" after the longest match", data, 1<<20)
+	}
+}
+
 // TestBoundedReader2Reuse: one reader reset over every length's sequence
 // in turn decodes each to its input, with the dictionary grown by the
 // largest and the smallest after.

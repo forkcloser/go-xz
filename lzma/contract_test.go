@@ -632,6 +632,8 @@ func TestContractLZMA2Malformed(t *testing.T) {
 type miscounter struct {
 	calls, at, delta int
 	hit              bool
+	// hitAt is the call that was miscounted, once hit is set.
+	hitAt int
 }
 
 func (m *miscounter) Write(p []byte) (int, error) {
@@ -639,6 +641,7 @@ func (m *miscounter) Write(p []byte) (int, error) {
 	// An empty write has no count to get wrong.
 	if m.calls >= m.at && !m.hit && len(p) > 0 {
 		m.hit = true
+		m.hitAt = m.calls
 
 		return len(p) + m.delta, nil
 	}
@@ -651,7 +654,10 @@ func (m *miscounter) Write(p []byte) (int, error) {
 // takes less than it was given without an error, at any one of its calls,
 // is io.ErrShortWrite from the Write, Flush or Close that meets it, a
 // chunk header as much as a chunk. One that reports more than it was given
-// is an error, not a panic.
+// is an error, not a panic. The data does not compress, and goes out in
+// chunks of both kinds: compressed all the same under the smallest
+// dictionary, which no longer holds a chunk's input to copy it from, and
+// stored under one that does.
 func TestContractWriter2HoldsItsWriterToItsCount(t *testing.T) {
 	t.Parallel()
 
@@ -660,6 +666,14 @@ func TestContractWriter2HoldsItsWriterToItsCount(t *testing.T) {
 		t.Fatal("no random corpus")
 	}
 
+	for _, dictSize := range []int{lzma.MinDictSize, 1 << 16} {
+		writer2HoldsItsWriterToItsCount(t, data, dictSize)
+	}
+}
+
+func writer2HoldsItsWriterToItsCount(t *testing.T, data []byte, dictSize int) {
+	t.Helper()
+
 	for _, delta := range []int{-1, 3} {
 		var calls int
 
@@ -667,7 +681,7 @@ func TestContractWriter2HoldsItsWriterToItsCount(t *testing.T) {
 			m := &miscounter{at: at, delta: delta}
 
 			err := func() error {
-				w, err := lzma.NewWriter2(m, lzma.WithDictSize(lzma.MinDictSize))
+				w, err := lzma.NewWriter2(m, lzma.WithDictSize(dictSize))
 				if err != nil {
 					return err
 				}
@@ -692,17 +706,105 @@ func TestContractWriter2HoldsItsWriterToItsCount(t *testing.T) {
 			}
 
 			if delta < 0 && !errors.Is(err, io.ErrShortWrite) {
-				t.Errorf("call %d a byte short: %v, want io.ErrShortWrite", at, err)
+				t.Errorf("dictionary %d, call %d a byte short: %v, want io.ErrShortWrite", dictSize, at, err)
 			}
 
 			if delta > 0 && err == nil {
-				t.Errorf("call %d counting %d too many: no error", at, delta)
+				t.Errorf("dictionary %d, call %d counting %d too many: no error", dictSize, at, delta)
 			}
 		}
 
 		if calls < 5 {
-			t.Errorf("the sequence went out in %d writes, too few to say anything", calls)
+			t.Errorf("dictionary %d: the sequence went out in %d writes, too few to say anything", dictSize, calls)
 		}
+	}
+}
+
+// failingByteWriter is an io.ByteWriter, which the classic writer writes to
+// as it is, a byte at a time. Its nth WriteByte fails, that one only; what
+// arrives through Write, the header, is taken and not counted.
+type failingByteWriter struct {
+	at, calls, after int
+	err              error
+}
+
+func (*failingByteWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (f *failingByteWriter) WriteByte(byte) error {
+	f.calls++
+
+	switch {
+	case f.calls == f.at:
+		return f.err
+	case f.calls > f.at:
+		f.after++
+	}
+
+	return nil
+}
+
+// TestContractWriterKeepsItsWritersFailure: Close "ensures that all data
+// from the buffer will be compressed and the LZMA stream will be finished.
+// After a failed Write it returns that error and writes nothing". The
+// stream leaves the encoder a byte at a time, from the midst of any
+// operation's bits, during Write once the dictionary has filled and during
+// Close for what is left, the end marker and the range coder's last bytes.
+// Whichever byte the underlying writer refuses, once, the call that met it
+// returns that error, Close returns it, and no byte follows the one
+// refused: a stream short of a byte is never finished as if it were whole.
+func TestContractWriterKeepsItsWritersFailure(t *testing.T) {
+	t.Parallel()
+
+	// Records and prose for operations of every kind, then zeros to fill
+	// the smallest dictionary and its buffer, so that the first part is
+	// compressed during Write.
+	data := append(append(records(1024), prose(1024)...), make([]byte, 7000)...)
+	refused := errors.New("refused")
+
+	var during [2]int
+
+	for at := 1; ; at++ {
+		f := &failingByteWriter{at: at, err: refused}
+
+		w, err := lzma.NewWriter(f, lzma.WithDictSize(lzma.MinDictSize))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, werr := w.Write(data)
+		inWrite := f.calls >= at
+		cerr := w.Close()
+
+		if f.calls < at {
+			// The stream is shorter than at bytes: every byte was refused once.
+			if werr != nil || cerr != nil {
+				t.Fatalf("nothing refused: Write %v, Close %v", werr, cerr)
+			}
+
+			break
+		}
+
+		if inWrite {
+			during[0]++
+		} else {
+			during[1]++
+		}
+
+		if inWrite != (werr != nil) || (werr != nil && !errors.Is(werr, refused)) {
+			t.Errorf("byte %d refused, during Write: %v: Write returned %v", at, inWrite, werr)
+		}
+
+		if !errors.Is(cerr, refused) {
+			t.Errorf("byte %d refused: Close returned %v", at, cerr)
+		}
+
+		if f.after != 0 {
+			t.Errorf("byte %d refused: %d bytes written after it", at, f.after)
+		}
+	}
+
+	if during[0] < 100 || during[1] < 5 {
+		t.Errorf("%d bytes left during Write and %d during Close: too few to say anything", during[0], during[1])
 	}
 }
 
@@ -1368,7 +1470,10 @@ func markControl(chunk []byte, control byte) []byte {
 // and exactly 1<<24, the least value that takes no new byte, after the
 // third, fourth or fifth bit of the repeat that follows: the bit that says
 // whether a repeat is the last distance, a short one, the second, the third.
-// A decoder that takes a byte there has lost the stream.
+// A decoder that takes a byte there has lost the stream. The last two hold
+// the same threshold at the two bits that choose the tree a length is coded
+// in, the third bit of a match after five literals and the fourth after
+// four.
 func TestContractHandBuiltStreams(t *testing.T) {
 	t.Parallel()
 
@@ -1403,6 +1508,16 @@ func TestContractHandBuiltStreams(t *testing.T) {
 			"d800000100ffffffffffffffff003098887e13c1e4f507bfffffff84000000",
 			"abccccxyz",
 		},
+		{
+			"the range at 1<<24 after a length's first choice bit: lit abcde, match of 2 at 1, lit xyz",
+			"d800000100ffffffffffffffff0030988866432c001e0f27a8440ffffffbe10000",
+			"abcdeeexyz",
+		},
+		{
+			"the range at 1<<24 after a length's second choice bit: lit abcd, match of 10 at 2, lit xyz",
+			"d800000100ffffffffffffffff00309888664a009e0f27e30470fffffbe30000",
+			"abcdcdcdcdcdcdxyz",
+		},
 	} {
 		stream, err := hex.DecodeString(tc.stream)
 		if err != nil {
@@ -1425,6 +1540,60 @@ func TestContractHandBuiltStreams(t *testing.T) {
 		if got, rerr := io.ReadAll(r); rerr != nil || string(got) != tc.want {
 			t.Errorf("%s: %q, %v; the reference decodes %q", tc.name, got, rerr, tc.want)
 		}
+	}
+}
+
+// TestContractCarryIntoAHeldByte: "what the writers produce, the reference
+// decodes to the input", at the one turn of the range encoder that random
+// data takes about once in a billion bytes. The encoder holds back the byte
+// it would write next, and every 0xff after it, until the bytes that follow
+// can no longer carry into them. Here the carry comes while the byte moving
+// out of the low word is itself 0xff: the carry belongs to the bytes held,
+// and that byte is held in their place.
+//
+// The input was found by search over seeds; its 383rd byte brings the
+// carry. No byte of it comes twice in a row and the encoder finds nothing
+// in it to copy, so it is coded as literals, and for literals the format
+// fixes every bit: the way to that carry does not pass through the match
+// finder. Should an encoder one day find a match in it, the stream is no
+// longer the one this row was chosen for; its length says so.
+func TestContractCarryIntoAHeldByte(t *testing.T) {
+	t.Parallel()
+
+	src := rand.NewPCG(20472567, 1226)
+
+	data := make([]byte, 400)
+	for i := range data {
+		data[i] = byte(src.Uint64() >> 32)
+		if i > 0 && data[i] == data[i-1] {
+			data[i]++
+		}
+	}
+
+	stream := classic(t, wcase{opts: []lzma.Option{lzma.WithDictSize(lzma.MinDictSize)}}, data)
+
+	const literalsOnly = 437
+
+	if len(stream) != literalsOnly {
+		t.Errorf(
+			"the stream is %d bytes, not the %d of 400 literals: search for another seed",
+			len(stream),
+			literalsOnly,
+		)
+	}
+
+	out, err := lzmaspec.Decode(stream)
+	if err != nil || !bytes.Equal(out.Data, data) || out.Corrupted {
+		t.Fatalf("the reference: %d bytes, %v, corrupted %v", len(out.Data), err, out.Corrupted)
+	}
+
+	r, err := lzma.NewReader(bytes.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := io.ReadAll(r); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the reader: %d bytes, %v", len(got), err)
 	}
 }
 

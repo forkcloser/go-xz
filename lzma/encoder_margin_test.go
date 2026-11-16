@@ -328,12 +328,12 @@ func TestEncoderMarginHoldsACostlyMatch(t *testing.T) {
 
 // TestEncoderMarginHoldsTheFarthestMatch: maxOpLen is "twenty bytes and no
 // more", and the margin holds an operation of that many and the five Close
-// needs. The farthest match, every bit of it trained against, takes twenty
-// bytes of room from some ranges and nineteen from the others, never more;
-// one that takes twenty is put at every distance from a limit, without the
-// end-of-stream marker and with it: Close succeeds, and nothing is written
-// past the limit. What is written is not decoded: no bytes stand behind
-// the distance.
+// needs. The farthest match, every modelled bit of it trained against,
+// takes twenty bytes of room from some ranges and nineteen from the others,
+// never more; one that takes twenty is put at every distance from a limit,
+// without the end-of-stream marker and with it: Close succeeds, and nothing
+// is written past the limit. What is written is not decoded: no bytes stand
+// behind the distance.
 func TestEncoderMarginHoldsTheFarthestMatch(t *testing.T) {
 	t.Parallel()
 
