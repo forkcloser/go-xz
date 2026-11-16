@@ -29,9 +29,9 @@ type Writer2 struct {
 
 	// err is the first error returned by the underlying writer or the
 	// encoder. Once set, Write, Flush and Close return it: the chunk in
-	// progress may have been partly written, so continuing would produce a
-	// stream the encoder cannot vouch for — and, with the chunk accounting
-	// left mid-flight, used to panic on the next Write.
+	// progress may have been partly written and its accounting is left
+	// mid-flight, so continuing would produce a stream the encoder cannot
+	// vouch for.
 	err error
 
 	start   *state

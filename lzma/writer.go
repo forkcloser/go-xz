@@ -18,8 +18,9 @@ const (
 	MaxDictSize = 1<<32 - 1
 )
 
-// lookaheadSize is the encoder's lookahead buffer, which bounds the longest
-// match it looks for.
+// lookaheadSize is the room the encoder's dictionary keeps, past the
+// dictionary itself, for input not yet encoded. The longest match is
+// maxMatchLen, not this.
 const lookaheadSize = 4096
 
 // Writer writes an LZMA stream in the classic format.
