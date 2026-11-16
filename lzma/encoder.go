@@ -16,9 +16,29 @@ var (
 	errMatchLength   = errors.New("match length out of range")
 )
 
-// opLenMargin provides the upper limit of the number of bytes required
-// to encode a single operation.
-const opLenMargin = 16
+// The room the range encoder must have before an operation is started, in
+// the bytes its Available counts: every byte it writes or holds back takes
+// one, and it writes or holds back at most one for each bit it codes.
+const (
+	// maxOpLen bounds the bytes one operation takes. The costliest is a
+	// match at the farthest distances: 22 bits coded against a probability,
+	// that it is a match and no repeat, ten of its length, the six of its
+	// distance slot and its four low distance bits, and 26 distance bits
+	// coded directly. A probability stays within 31 and 2017 of 2048, so a
+	// bit narrows the range by a factor of 2048/31 at most, a little over
+	// six bits, and by one part in 8192 more for the shift it is computed
+	// with; a direct bit by two. That is 159.0 bits, and the range holds
+	// eight before its first byte goes: 167.0 bits are twenty bytes and no
+	// more.
+	maxOpLen = 20
+	// closeLen is the room Close needs: its five shifts each take a byte of
+	// room, and the range encoder refuses to write with none left.
+	closeLen = 5
+	// opLenMargin is the room an operation is started with, so that it can
+	// be finished and the stream closed after it wherever the limit falls:
+	// with less, the limit error reaches Writer2's caller from Close.
+	opLenMargin = maxOpLen + closeLen
+)
 
 // compressFlags control the compression process.
 type compressFlags uint32
@@ -68,7 +88,9 @@ func newEncoder(bw io.ByteWriter, state *state, dict *encoderDict,
 		margin: opLenMargin,
 	}
 	if e.marker {
-		e.margin += 5
+		// The end-of-stream marker is one more match, written by Close: a
+		// whole operation's room is kept for it, more than it takes.
+		e.margin += maxOpLen
 	}
 
 	return e
