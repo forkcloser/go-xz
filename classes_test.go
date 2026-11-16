@@ -107,7 +107,8 @@ func blockHeader(flags byte, sizes []byte, dc byte) []byte {
 
 // TestClassesBlockHeader: a block header the CRC-32 vouches for and the
 // block does not bear out is corrupt, in both readers: sizes it declares
-// that the block does not reach, and fields that run past its end.
+// that the block does not reach, the largest a size field carries
+// included, a size no field carries, and fields that run past its end.
 func TestClassesBlockHeader(t *testing.T) {
 	t.Parallel()
 
@@ -143,9 +144,39 @@ func TestClassesBlockHeader(t *testing.T) {
 	bothReaders(t, "uncompressed size one less", patched(blockHeader(0x80, []byte{43}, dc)), xz.ErrCorrupt)
 	bothReaders(t, "compressed size one more", patched(blockHeader(0x40, []byte{49}, dc)), xz.ErrCorrupt)
 
+	// A size field is at most nine bytes, 63 bits: 2^63-1 is a size, which
+	// this block is not, and 2^63 would take a tenth byte, which is no
+	// size's. The header is then twenty bytes, and takes the place of the
+	// writer's twelve.
+	long := func(flags byte, size []byte) []byte {
+		h := append([]byte{0x04, flags}, size...)
+		h = append(h, 0x21, 0x01, dc)
+
+		for len(h) < 16 {
+			h = append(h, 0)
+		}
+
+		var crc [4]byte
+
+		binary.LittleEndian.PutUint32(crc[:], crc32.ChecksumIEEE(h))
+
+		d := append(bytes.Clone(file[:12]), h...)
+		d = append(d, crc[:]...)
+
+		return append(d, file[24:]...)
+	}
+
+	largest := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}
+	tenth := []byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01}
+
+	bothReaders(t, "compressed size 2^63-1", long(0x40, largest), xz.ErrCorrupt)
+	bothReaders(t, "uncompressed size 2^63-1", long(0x80, largest), xz.ErrCorrupt)
+	bothReaders(t, "compressed size 2^63", long(0x40, tenth), xz.ErrCorrupt)
+	bothReaders(t, "uncompressed size 2^63", long(0x80, tenth), xz.ErrCorrupt)
+
 	// An 8-byte header whose fields need more than its 4 bytes before the
 	// CRC: a compressed size whose varint never ends, a filter ID likewise,
-	// and filter flags cut after the properties size.
+	// filter flags cut after the ID, and cut after the properties size.
 	short := func(body []byte) []byte {
 		var crc [4]byte
 
@@ -159,5 +190,6 @@ func TestClassesBlockHeader(t *testing.T) {
 
 	bothReaders(t, "size varint past the end", short([]byte{0x01, 0x40, 0x80, 0x80}), xz.ErrCorrupt)
 	bothReaders(t, "filter id past the end", short([]byte{0x01, 0x00, 0x80, 0x80}), xz.ErrCorrupt)
+	bothReaders(t, "filter flags cut after the id", short([]byte{0x01, 0x40, 0x30, 0x21}), xz.ErrCorrupt)
 	bothReaders(t, "filter flags cut", short([]byte{0x01, 0x00, 0x21, 0x01}), xz.ErrCorrupt)
 }

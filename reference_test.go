@@ -40,6 +40,11 @@ type refOptions struct {
 	check    byte // flagNone, flagCRC32, flagCRC64 or flagSHA256
 	sizes    bool // Compressed Size and Uncompressed Size in every block header
 	dictCode byte // the LZMA2 filter's dictionary size code
+	// before is the Filter Flags of the filters before LZMA2, in order,
+	// each whole: ID, size of properties, properties. The reference applies
+	// no filter: a block's lzma2 is then of its data as those filters leave
+	// it, and its data what a decoder gives back.
+	before [][]byte
 }
 
 // refVLI encodes a variable-length integer: seven bits per byte, least
@@ -112,10 +117,11 @@ func refPad(b []byte) []byte {
 }
 
 // refBlockHeader is a block header: the size byte, the flags, the sizes if
-// asked, the LZMA2 filter with its dictionary code, zero padding to the
-// declared size, and the CRC-32.
+// asked, the filters before LZMA2 if any, the LZMA2 filter with its
+// dictionary code, zero padding to the declared size, and the CRC-32.
 func refBlockHeader(o refOptions, b refBlock) []byte {
-	var flags byte
+	// The low two bits are the number of filters less one.
+	flags := byte(len(o.before))
 	if o.sizes {
 		flags |= 0x40 | 0x80
 	}
@@ -124,6 +130,10 @@ func refBlockHeader(o refOptions, b refBlock) []byte {
 	if o.sizes {
 		content = append(content, refVLI(uint64(len(b.lzma2)))...)
 		content = append(content, refVLI(uint64(len(b.data)))...)
+	}
+
+	for _, f := range o.before {
+		content = append(content, f...)
 	}
 
 	content = append(content, 0x21, 0x01, o.dictCode)

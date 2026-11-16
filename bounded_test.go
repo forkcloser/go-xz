@@ -542,3 +542,179 @@ func TestBoundedReadCost(t *testing.T) {
 		})
 	}
 }
+
+// TestBoundedReadReturnsSomething: a Read given room returns a byte at
+// least, or an error: never no byte and no error, which io.Reader
+// discourages and a caller has to take for nothing having happened. That
+// holds where a Read starts at the end of a block, of an empty block, of a
+// stream and of an empty stream, however the file is read and whatever the
+// size of the reads: one that divides the blocks, one that does not, and a
+// byte at a time.
+func TestBoundedReadReturnsSomething(t *testing.T) {
+	t.Parallel()
+
+	data := cData(4000)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	empty := refBlocks(t, []byte{}, 0)
+
+	blocks := append(refBlocks(t, data[:1000], 500), empty...)
+	blocks = append(blocks, refBlocks(t, data[1000:2000], 500)...)
+	blocks = append(blocks, empty...)
+
+	file := refFile(
+		4,
+		refStream(o, blocks),
+		refStream(o, nil),
+		refStream(o, empty),
+		refStream(o, refBlocks(t, data[2000:], 500)),
+		refStream(o, nil),
+	)
+
+	for name, open := range readers() {
+		for _, size := range []int{1, 7, 500, 4096} {
+			r, err := open(file)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+
+			var got []byte
+
+			buf := make([]byte, size)
+
+			for err == nil {
+				var n int
+
+				n, err = r.Read(buf)
+				got = append(got, buf[:n]...)
+
+				if n == 0 && err == nil {
+					t.Fatalf("%s, reads of %d: after %d bytes, a Read of no byte and no error", name, size, len(got))
+				}
+			}
+
+			//nolint:errorlint // io.EOF itself: callers compare it with ==
+			if err != io.EOF || !bytes.Equal(got, data) {
+				t.Errorf("%s, reads of %d: %d bytes, %v", name, size, len(got), err)
+			}
+
+			_ = r.Close()
+		}
+	}
+}
+
+// TestBoundedWorkersReadByOffset: with workers, "blocks decode concurrently
+// when the input is an io.ReaderAt whose start and size the reader can
+// learn (an io.Seeker, as a file or a bytes.Reader is), through the file's
+// indexes". Such a file is fetched by offset and not read in order, no Read
+// reaching the input, where it starts past the start of its input, at the
+// position the input stands at and is left at, and where one of its
+// streams has no block, the first, a middle one or the last.
+func TestBoundedWorkersReadByOffset(t *testing.T) {
+	t.Parallel()
+
+	data := cData(4000)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	a := refStream(o, refBlocks(t, data[:2000], 500))
+	b := refStream(o, refBlocks(t, data[2000:], 500))
+	none := refStream(o, nil)
+
+	for name, tc := range map[string]struct {
+		before int // what the input holds before the file
+		file   []byte
+	}{
+		"a file at the start of its input": {0, refFile(0, a, b)},
+		"a byte before the file":           {1, refFile(0, a, b)},
+		"seven bytes before the file":      {7, refFile(0, a, b)},
+		"a kilobyte before the file":       {1024, refFile(0, a, b)},
+		"an empty stream first":            {0, refFile(0, none, a, b)},
+		"an empty stream in the middle":    {0, refFile(0, a, none, b)},
+		"an empty stream last":             {0, refFile(0, a, b, none)},
+		"only the first stream has blocks": {0, refFile(0, a, none, none)},
+		"only the last stream has blocks":  {0, refFile(0, none, none, b)},
+		"an empty stream first, past the start, with padding": {
+			12, refFile(8, none, a, b),
+		},
+	} {
+		want, err := refParse(tc.file)
+		if err != nil {
+			t.Fatalf("%s: the reference refuses its own file: %v", name, err)
+		}
+
+		m := &meter{Reader: bytes.NewReader(append(bytes.Repeat([]byte{0xfd}, tc.before), tc.file...))}
+
+		if _, err = m.Seek(int64(tc.before), io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+
+		r, err := xz.NewReader(m, xz.WithWorkers(4))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+
+		got, err := io.ReadAll(r)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("%s: %d bytes, %v", name, len(got), err)
+		}
+
+		_ = r.Close()
+
+		if m.reads != 0 {
+			t.Errorf("%s: %d Read calls on the input, want it fetched by offset alone", name, m.reads)
+		}
+
+		if pos, serr := m.Seek(0, io.SeekCurrent); serr != nil || pos != int64(tc.before) {
+			t.Errorf("%s: the input stands at %d, %v; it stood at %d", name, pos, serr, tc.before)
+		}
+	}
+}
+
+// TestBoundedIndexRecordCount: an index that declares more records than
+// the stream before it has room for blocks is refused before its records
+// are read, when that stream does hold blocks as when it holds none. Eight
+// kilobytes of blocks are 682 blocks at the most, twelve bytes being the
+// least a block takes; an index of ninety thousand records after them,
+// under a valid CRC-32, is 180 kilobytes that would become a megabyte and
+// a half of records. Refusing the file, with workers and then in order,
+// allocates less than the file is long, and it is ErrCorrupt.
+//
+//nolint:paralleltest // measures the process's TotalAlloc against a budget; a parallel test's allocations would count against it
+func TestBoundedIndexRecordCount(t *testing.T) {
+	const (
+		blockArea = 8 << 10
+		count     = 90000
+	)
+
+	records := make([]refRecord, count)
+	for i := range records {
+		records[i] = refRecord{unpadded: 1, uncompressed: 1}
+	}
+
+	header := refStream(refOptions{check: flagCRC32, dictCode: 20}, nil)[:xz.HeaderLen]
+	file := refIndexed(append(bytes.Clone(header), make([]byte, blockArea)...), records)
+
+	if _, err := refParse(file); err == nil {
+		t.Fatal("the reference accepts the file")
+	}
+
+	var before, after runtime.MemStats
+
+	//revive:disable-next-line:call-to-gc the allocation budget is measured from a collected heap
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	r, err := xz.NewReader(bytes.NewReader(file), xz.WithWorkers(4))
+	if err == nil {
+		_, err = io.ReadAll(r)
+		_ = r.Close()
+	}
+
+	runtime.ReadMemStats(&after)
+
+	if !errors.Is(err, xz.ErrCorrupt) {
+		t.Errorf("%v, want an error matching ErrCorrupt", err)
+	}
+
+	if used := after.TotalAlloc - before.TotalAlloc; used > uint64(len(file)) {
+		t.Errorf("refusing a file of %d bytes allocated %d", len(file), used)
+	}
+}

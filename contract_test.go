@@ -35,6 +35,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -427,6 +428,15 @@ func TestContractMalformed(t *testing.T) {
 			refStream(refOptions{check: flagNone, dictCode: 20}, refBlocks(t, data[:300], 0)),
 			refStream(refOptions{check: flagNone, sizes: true, dictCode: 20}, refBlocks(t, data[300:], 0)),
 		),
+		// Streams with blocks to decode at once on either side of an empty
+		// one: a reader that finds the streams from the end of the file
+		// still answers for the first.
+		"streams of blocks": refFile(
+			0,
+			refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data[:120], 60)),
+			refStream(refOptions{check: flagCRC32, dictCode: 20}, nil),
+			refStream(refOptions{check: flagCRC64, sizes: true, dictCode: 20}, refBlocks(t, data[300:420], 60)),
+		),
 	}
 
 	for fname, file := range files {
@@ -483,6 +493,7 @@ func TestContractWriterRefusesBeforeWriting(t *testing.T) {
 		"a negative lp":                   xz.WithProperties(3, -1, 2),
 		"a negative pb":                   xz.WithProperties(3, 0, -1),
 		"a negative block size":           xz.WithBlockSize(-1),
+		"a block size of zero":            xz.WithBlockSize(0),
 		"an unknown check":                xz.WithCheck(xz.Check(9)),
 		"a delta distance of zero":        xz.WithFilters(xz.Filter{ID: xz.Delta}),
 	} {
@@ -530,6 +541,238 @@ func TestContractWriterRefusesBeforeWriting(t *testing.T) {
 		file := writeAll(t, []xz.Option{opt}, data)
 		if got, err := refParse(file); err != nil || !bytes.Equal(got, data) {
 			t.Errorf("%s: the reference reads %d bytes, %v", name, len(got), err)
+		}
+	}
+
+	// So are the block sizes at both ends, with or without workers: a block
+	// of one byte, which seven bytes fill seven times, and the largest
+	// int64, where an int holds it, which no data fills.
+	for wname, workers := range map[string][]xz.Option{"no workers": nil, "workers": {xz.WithWorkers(2)}} {
+		sizes := map[int64]int{1: 7}
+		if math.MaxInt == math.MaxInt64 {
+			sizes[math.MaxInt64] = 1
+		}
+
+		for size, blocks := range sizes {
+			data := cData(7)
+
+			file := writeAll(t, append([]xz.Option{xz.WithBlockSize(size)}, workers...), data)
+			if got, err := refParse(file); err != nil || !bytes.Equal(got, data) {
+				t.Errorf("a block size of %d, %s: the reference reads %d bytes, %v", size, wname, len(got), err)
+			}
+
+			if n := refCountBlocks(file); n != blocks {
+				t.Errorf("a block size of %d, %s: %d blocks, want %d", size, wname, n, blocks)
+			}
+		}
+	}
+}
+
+// TestContractWriterDefaults: a writer given no option is the writer given
+// each default the options document: WithDictSize "default 8 MiB",
+// WithProperties "default 3, 0 and 2, what xz uses", WithCheck "default
+// CRC64" and "CheckDefault is CRC64", WithBlockSize "default: one block",
+// WithWorkers "default 1, no concurrency". Another value of each is another
+// file, so the comparison holds each of them.
+func TestContractWriterDefaults(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	want := writeAll(t, nil, data)
+
+	for name, opt := range map[string]xz.Option{
+		"WithDictSize(8 MiB)":          xz.WithDictSize(8 << 20),
+		"WithProperties(3, 0, 2)":      xz.WithProperties(3, 0, 2),
+		"WithCheck(CheckCRC64)":        xz.WithCheck(xz.CheckCRC64),
+		"WithCheck(CheckDefault)":      xz.WithCheck(xz.CheckDefault),
+		"WithBlockSize(math.MaxInt64)": xz.WithBlockSize(math.MaxInt64),
+		"WithWorkers(1)":               xz.WithWorkers(1),
+	} {
+		if got := writeAll(t, []xz.Option{opt}, data); !bytes.Equal(got, want) {
+			t.Errorf("%s: a file of %d bytes, not the %d of a writer given no option", name, len(got), len(want))
+		}
+	}
+
+	for name, opt := range map[string]xz.Option{
+		"WithDictSize(4 MiB)":     xz.WithDictSize(4 << 20),
+		"WithProperties(4, 0, 2)": xz.WithProperties(4, 0, 2),
+		"WithProperties(3, 1, 2)": xz.WithProperties(3, 1, 2),
+		"WithProperties(3, 0, 3)": xz.WithProperties(3, 0, 3),
+		"WithCheck(CheckCRC32)":   xz.WithCheck(xz.CheckCRC32),
+		"WithBlockSize(1000)":     xz.WithBlockSize(1000),
+	} {
+		if got := writeAll(t, []xz.Option{opt}, data); bytes.Equal(got, want) {
+			t.Errorf("%s: the file of a writer given no option", name)
+		}
+	}
+}
+
+// TestContractOptionScope: "each option names the constructor it applies
+// to; a constructor handed the other's option returns an error", whichever
+// option it is, alone or after one the constructor takes, with a value in
+// its range so that the refusal is of the option; and "an option a
+// constructor refuses matches none of" the sentinels. A writer refused has
+// written nothing. WithWorkers is the one option both take.
+func TestContractOptionScope(t *testing.T) {
+	t.Parallel()
+
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, cData(300), 0))
+
+	refused := func(name string, err error) {
+		t.Helper()
+
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+
+		for _, sentinel := range []error{xz.ErrCorrupt, xz.ErrUnsupported, xz.ErrClosed} {
+			if errors.Is(err, sentinel) {
+				t.Errorf("%s: %v matches %v", name, err, sentinel)
+			}
+		}
+	}
+
+	for name, opt := range map[string]xz.Option{
+		"WithMaxDictSize":  xz.WithMaxDictSize(1 << 20),
+		"WithSingleStream": xz.WithSingleStream(),
+	} {
+		for before, opts := range map[string][]xz.Option{"alone": {opt}, "after WithWorkers": {xz.WithWorkers(2), opt}} {
+			var out bytes.Buffer
+
+			w, err := xz.NewWriter(&out, opts...)
+			refused("NewWriter, "+name+", "+before, err)
+
+			if w != nil || out.Len() != 0 {
+				t.Errorf("NewWriter, %s, %s: a writer %v, %d bytes written", name, before, w != nil, out.Len())
+			}
+		}
+	}
+
+	for name, opt := range map[string]xz.Option{
+		"WithDictSize":   xz.WithDictSize(1 << 20),
+		"WithProperties": xz.WithProperties(3, 0, 2),
+		"WithBlockSize":  xz.WithBlockSize(1 << 20),
+		"WithCheck":      xz.WithCheck(xz.CheckCRC32),
+		"WithFilters":    xz.WithFilters(xz.Filter{ID: xz.X86}),
+	} {
+		for before, opts := range map[string][]xz.Option{"alone": {opt}, "after WithWorkers": {xz.WithWorkers(2), opt}} {
+			r, err := xz.NewReader(bytes.NewReader(file), opts...)
+			refused("NewReader, "+name+", "+before, err)
+
+			if r != nil {
+				t.Errorf("NewReader, %s, %s: a reader beside the error", name, before)
+			}
+		}
+	}
+
+	if _, err := xz.NewWriter(io.Discard, xz.WithWorkers(2)); err != nil {
+		t.Errorf("NewWriter, WithWorkers: %v", err)
+	}
+
+	r, err := xz.NewReader(bytes.NewReader(file), xz.WithWorkers(2))
+	if err != nil {
+		t.Fatalf("NewReader, WithWorkers: %v", err)
+	}
+
+	if err = r.Close(); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestContractMaxDictSize: "WithMaxDictSize bounds the dictionary a block
+// header may ask for: a block asking for more is refused with
+// ErrUnsupported", and with that alone. A block asking for the bound
+// itself is read: at the smallest bound the option takes, at a size
+// between two powers of two, and at the largest, as without the option:
+// "the default is no bound below the format's 4 GiB-1". Under a bound one
+// byte below what the block asks for, the file is refused, with workers as
+// without.
+func TestContractMaxDictSize(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+
+	sizes := map[byte]int64{0: lzma.MinDictSize, 1: 6 << 10, 20: 4 << 20}
+	// The dictionary grows as the block decodes and these blocks decode to
+	// little; the size itself is one an int must hold.
+	if math.MaxInt > lzma.MaxDictSize {
+		sizes[40] = lzma.MaxDictSize
+	}
+
+	for code, size := range sizes {
+		file := refStream(refOptions{check: flagCRC32, dictCode: code}, refBlocks(t, data, 1000))
+
+		read := func(opts ...xz.Option) ([]byte, error) {
+			r, err := xz.NewReader(bytes.NewReader(file), opts...)
+			if err != nil {
+				return nil, err
+			}
+
+			defer func() { _ = r.Close() }()
+
+			return io.ReadAll(r)
+		}
+
+		for wname, workers := range map[string][]xz.Option{"no workers": nil, "workers": {xz.WithWorkers(4)}} {
+			got, err := read(append([]xz.Option{xz.WithMaxDictSize(size)}, workers...)...)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Errorf("a dictionary of %d under a bound of %d, %s: %d bytes, %v", size, size, wname, len(got), err)
+			}
+
+			if size == lzma.MaxDictSize {
+				if got, err = read(workers...); err != nil || !bytes.Equal(got, data) {
+					t.Errorf("a dictionary of %d under no bound, %s: %d bytes, %v", size, wname, len(got), err)
+				}
+			}
+
+			// A bound under the smallest is not a bound the option takes.
+			if size == lzma.MinDictSize {
+				continue
+			}
+
+			_, err = read(append([]xz.Option{xz.WithMaxDictSize(size - 1)}, workers...)...)
+			if !errors.Is(err, xz.ErrUnsupported) || errors.Is(err, xz.ErrCorrupt) {
+				t.Errorf("a dictionary of %d under a bound of %d, %s: %v, want an error matching ErrUnsupported alone",
+					size, size-1, wname, err)
+			}
+		}
+	}
+}
+
+// TestContractFilterIDs: ErrUnsupported is "a stream this package cannot
+// decode even though it may be well formed, such as a check or a filter
+// the format reserves for later": a filter ID the format has given to no
+// filter yet, the largest of them 2^62-1. From 2^62 on the format keeps the
+// IDs out of its files, and a block header naming one is not a valid xz
+// stream: ErrCorrupt. Each stands before LZMA2, without properties, in a
+// block header whose CRC-32 holds.
+func TestContractFilterIDs(t *testing.T) {
+	t.Parallel()
+
+	for id, want := range map[uint64]error{
+		0x00:      xz.ErrUnsupported,
+		0x02:      xz.ErrUnsupported,
+		0x0C:      xz.ErrUnsupported,
+		0x20:      xz.ErrUnsupported,
+		0x22:      xz.ErrUnsupported,
+		1<<62 - 1: xz.ErrUnsupported,
+		1 << 62:   xz.ErrCorrupt,
+		1<<62 + 1: xz.ErrCorrupt,
+		1<<63 - 1: xz.ErrCorrupt,
+	} {
+		o := refOptions{check: flagCRC32, dictCode: 20, before: [][]byte{append(refVLI(id), 0x00)}}
+		file := refStream(o, refBlocks(t, cData(2000), 1000))
+
+		sequential, parallel := both(file)
+		for name, got := range map[string]verdict{"sequential": sequential, "parallel": parallel} {
+			other := xz.ErrCorrupt
+			if errors.Is(want, xz.ErrCorrupt) {
+				other = xz.ErrUnsupported
+			}
+
+			if !errors.Is(got.err, want) || errors.Is(got.err, other) {
+				t.Errorf("filter ID %#x, %s: %v, want an error matching %v alone", id, name, got.err, want)
+			}
 		}
 	}
 }
@@ -1030,7 +1273,9 @@ func class(err error) string {
 // refused as". A file of three blocks cut after each of its bytes, with
 // each of its bytes flipped, and with bytes or padding after it, is refused
 // as the same kind of thing with workers and without, or read to the same
-// data; and so is a file read with WithSingleStream. The one difference is
+// data; and so is a file read with WithSingleStream, and one whose index
+// ends where its CRC-32 should begin, under a footer that counts it so.
+// The one difference is
 // the documented one: a flipped size that makes a block claim more than the
 // file holds is a file cut short to a reader in order, which cannot know
 // where the file ends, and corrupt to one that does.
@@ -1049,6 +1294,7 @@ func TestContractWorkersChangeNoVerdict(t *testing.T) {
 		"padding not of four":   append(bytes.Clone(file), 0, 0),
 		"twice":                 append(bytes.Clone(file), file...),
 		"twice, the second cut": append(bytes.Clone(file), file[:len(file)/2]...),
+		"the index without its CRC-32, as the footer counts it": withoutIndexCRC(file),
 	}
 
 	for cut := range file {
@@ -1129,6 +1375,113 @@ func TestContractWorkersChangeNoVerdict(t *testing.T) {
 
 		if differs != byOffset {
 			t.Errorf("%d blocks: read by offset %v, want %v", blocks, differs, byOffset)
+		}
+	}
+}
+
+// withoutIndexCRC returns the one-stream file without the CRC-32 of its
+// index, under a footer whose backward size counts the index without it:
+// the four bytes where that CRC-32 is read are then the footer's first.
+func withoutIndexCRC(file []byte) []byte {
+	backward := binary.LittleEndian.Uint32(file[len(file)-8:])
+	out := bytes.Clone(file[:len(file)-16])
+
+	var size [4]byte
+
+	binary.LittleEndian.PutUint32(size[:], backward-1)
+
+	footer := append(size[:], file[len(file)-4:len(file)-2]...)
+	out = append(out, refCRC32(footer)...)
+	out = append(out, footer...)
+
+	return append(out, "YZ"...)
+}
+
+// withIndex returns the one-stream file with its index replaced by the
+// fields given, from the indicator to the last record: padded, under its
+// own CRC-32, before a footer that states its size.
+func withIndex(file, fields []byte) []byte {
+	backward := int(binary.LittleEndian.Uint32(file[len(file)-8:]))
+	out := bytes.Clone(file[:len(file)-12-(backward+1)*4])
+
+	index := refPad(bytes.Clone(fields))
+	index = append(index, refCRC32(index)...)
+	out = append(out, index...)
+
+	var size [4]byte
+
+	binary.LittleEndian.PutUint32(size[:], uint32(len(index)/4-1))
+
+	footer := append(size[:], file[len(file)-4:len(file)-2]...)
+	out = append(out, refCRC32(footer)...)
+	out = append(out, footer...)
+
+	return append(out, "YZ"...)
+}
+
+// TestContractIndexFieldsInTheFewestBytes: what the reference refuses,
+// both readers refuse, as ErrCorrupt: a field of the index written in more
+// bytes than its value needs, in an index whose CRC-32 holds and whose
+// size the footer states. The record count, an unpadded size, an
+// uncompressed size, and those of an empty block, whose uncompressed size
+// is zero in either form: the value is the block's each time, and only its
+// form is refused.
+func TestContractIndexFieldsInTheFewestBytes(t *testing.T) {
+	t.Parallel()
+
+	// A block of five bytes, and an empty one: the end marker alone.
+	blocks := []refBlock{rawBlock([]byte("xz!\n\n")), {lzma2: []byte{0x00}}}
+	file := refStream(refOptions{check: flagCRC32, dictCode: 0}, blocks)
+
+	// Each block is its twelve-byte header, its chunks and its four-byte
+	// check.
+	unpadded := func(b refBlock) uint64 { return uint64(12 + len(b.lzma2) + 4) }
+
+	// long is v in one byte more than it needs.
+	long := func(v uint64) []byte {
+		b := refVLI(v)
+		b[len(b)-1] |= 0x80
+
+		return append(b, 0x00)
+	}
+
+	fields := func(form [5]func(uint64) []byte) []byte {
+		values := [5]uint64{2, unpadded(blocks[0]), 5, unpadded(blocks[1]), 0}
+		out := []byte{0x00}
+
+		for i, v := range values {
+			out = append(out, form[i](v)...)
+		}
+
+		return out
+	}
+
+	short := [5]func(uint64) []byte{refVLI, refVLI, refVLI, refVLI, refVLI}
+
+	if !bytes.Equal(withIndex(file, fields(short)), file) {
+		t.Fatal("the index rebuilt in the fewest bytes is not the reference's")
+	}
+
+	for i, name := range []string{
+		"the record count",
+		"an unpadded size",
+		"an uncompressed size",
+		"the unpadded size of an empty block",
+		"the uncompressed size of an empty block",
+	} {
+		form := short
+		form[i] = long
+
+		f := withIndex(file, fields(form))
+		if _, err := refParse(f); !errors.Is(err, errRefCorrupt) {
+			t.Fatalf("%s in one byte more: the reference: %v, want corrupt", name, err)
+		}
+
+		sequential, parallel := both(f)
+		for reader, got := range map[string]verdict{"sequential": sequential, "parallel": parallel} {
+			if !errors.Is(got.err, xz.ErrCorrupt) {
+				t.Errorf("%s in one byte more, %s: %d bytes, %v, want ErrCorrupt", name, reader, len(got.data), got.err)
+			}
 		}
 	}
 }
@@ -1226,6 +1579,55 @@ func TestContractSourceErrors(t *testing.T) {
 				t.Errorf("%s: %v matches %v", name, err, sentinel)
 			}
 		}
+	}
+}
+
+// TestContractSourceErrorsMatchingASentinel: an error of the source "is
+// returned as it is" when it matches one of the package's own sentinels
+// too, as the error of an xz.Reader this file is read through does: the
+// reader returns that error, the source's, and ends, in a reader of every
+// stream, of one, and with workers.
+func TestContractSourceErrorsMatchingASentinel(t *testing.T) {
+	t.Parallel()
+
+	data := cData(5000)
+	file := refStream(refOptions{check: flagCRC64, dictCode: 20}, refBlocks(t, data, 1000))
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for _, sentinel := range []error{xz.ErrCorrupt, xz.ErrUnsupported, xz.ErrClosed} {
+			cause := fmt.Errorf("the file this one is read from: %w", sentinel)
+
+			for name, opts := range map[string][]xz.Option{
+				"every stream": nil,
+				"one stream":   {xz.WithSingleStream()},
+				"workers":      {xz.WithWorkers(4)},
+			} {
+				r, err := xz.NewReader(&failing{file: file, n: len(file) / 2, err: cause}, opts...)
+				if err != nil {
+					t.Errorf("%v, %s: opening: %v", sentinel, name, err)
+
+					continue
+				}
+
+				_, err = io.ReadAll(r)
+				//nolint:errorlint // the same error, untouched
+				if err != cause {
+					t.Errorf("%v, %s: %v, want the source's error as it is", sentinel, name, err)
+				}
+
+				_ = r.Close()
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a reader is still reading")
 	}
 }
 
@@ -1809,5 +2211,580 @@ func TestContractCloseDuringWriteTo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// hesitant serves a file and answers once with no byte and no error before
+// the byte at pause, which io.Reader allows and asks callers to take as
+// nothing having happened.
+type hesitant struct {
+	data   []byte
+	pause  int
+	pos    int
+	paused bool
+}
+
+func (h *hesitant) Read(p []byte) (int, error) {
+	if h.pos == h.pause && !h.paused {
+		h.paused = true
+
+		return 0, nil
+	}
+
+	if h.pos == len(h.data) {
+		return 0, io.EOF
+	}
+
+	end := len(h.data)
+	if h.pos < h.pause {
+		end = h.pause
+	}
+
+	n := copy(p, h.data[h.pos:end])
+	h.pos += n
+
+	return n, nil
+}
+
+// readWithin reads r to its first error in at most calls Reads, and says
+// whether it got there: a reader that goes on answering with nothing is
+// stopped, not waited for.
+func readWithin(r io.Reader, calls int) (out []byte, ended bool, err error) {
+	buf := make([]byte, 512)
+
+	for range calls {
+		n, rerr := r.Read(buf)
+		out = append(out, buf[:n]...)
+
+		if rerr != nil {
+			return out, true, rerr
+		}
+	}
+
+	return out, false, nil
+}
+
+// TestContractSingleStream: "WithSingleStream makes the reader stop after
+// the first xz stream instead of continuing through stream padding into
+// further concatenated streams. Any byte after the stream, padding
+// included, is then reported as corruption". A stream with nothing after it
+// is read to io.EOF; with a byte, padding or a second stream after it, its
+// data come with an error matching ErrCorrupt and nothing of what follows,
+// also when the input first answers with no byte and no error, which says
+// nothing either way; and an input that fails where the stream ends is its
+// own error, "returned as it is". With workers too: a reader of one stream
+// reads in order.
+func TestContractSingleStream(t *testing.T) {
+	t.Parallel()
+
+	data := cData(3000)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	stream := refStream(o, refBlocks(t, data[:2000], 1000))
+	second := refStream(o, refBlocks(t, data[2000:], 0))
+	two := append(bytes.Clone(stream), second...)
+	errSource := errors.New("source failed")
+
+	for name, tc := range map[string]struct {
+		in   func() io.Reader
+		want error
+	}{
+		"the stream alone": {
+			func() io.Reader { return bytes.NewReader(stream) }, io.EOF,
+		},
+		"the stream, an empty answer, the end": {
+			func() io.Reader { return &hesitant{data: stream, pause: len(stream)} }, io.EOF,
+		},
+		"a byte after": {
+			func() io.Reader { return bytes.NewReader(append(bytes.Clone(stream), 1)) }, xz.ErrCorrupt,
+		},
+		"padding after": {
+			func() io.Reader { return bytes.NewReader(append(bytes.Clone(stream), 0, 0, 0, 0)) }, xz.ErrCorrupt,
+		},
+		"a second stream after": {
+			func() io.Reader { return bytes.NewReader(two) }, xz.ErrCorrupt,
+		},
+		"an empty answer, then a second stream": {
+			func() io.Reader { return &hesitant{data: two, pause: len(stream)} }, xz.ErrCorrupt,
+		},
+		"an input that fails after the stream": {
+			func() io.Reader { return &failing{file: stream, n: len(stream), err: errSource} }, errSource,
+		},
+	} {
+		for oname, opts := range map[string][]xz.Option{
+			"no workers": {xz.WithSingleStream()},
+			"workers":    {xz.WithSingleStream(), xz.WithWorkers(4)},
+		} {
+			r, err := xz.NewReader(tc.in(), opts...)
+			if err != nil {
+				t.Fatalf("%s, %s: NewReader: %v", name, oname, err)
+			}
+
+			got, ended, err := readWithin(r, 1000)
+			if !ended {
+				t.Errorf("%s, %s: no error after 1000 Reads and %d bytes", name, oname, len(got))
+
+				continue
+			}
+
+			switch {
+			//nolint:errorlint // io.EOF itself where the stream ends: callers compare it with ==
+			case tc.want == io.EOF && err != io.EOF, !errors.Is(err, tc.want):
+				t.Errorf("%s, %s: %v, want %v", name, oname, err, tc.want)
+			case errors.Is(err, errSource) && (errors.Is(err, xz.ErrCorrupt) || errors.Is(err, io.ErrUnexpectedEOF)):
+				t.Errorf("%s, %s: the input's error matches a sentinel: %v", name, oname, err)
+			}
+
+			if !bytes.Equal(got, data[:2000]) {
+				t.Errorf("%s, %s: %d bytes, want the %d of the first stream", name, oname, len(got), 2000)
+			}
+		}
+	}
+}
+
+// tally is a writer that keeps what it is given and counts the Writes of
+// nothing.
+type tally struct {
+	buf   bytes.Buffer
+	empty int
+}
+
+func (w *tally) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		w.empty++
+	}
+
+	return w.buf.Write(p)
+}
+
+// TestContractWriteToEveryByte: "WriteTo writes the whole remaining
+// uncompressed data to w". However the file is read, and at sizes around
+// the 32 KiB a reader in order copies by, the writer gets every byte and
+// WriteTo counts them, a file of one byte and a file of none included;
+// after a Read took the first byte, it is the rest; and the writer is given
+// data, never a Write of nothing. io.Copy, which hands the copy to WriteTo,
+// does the same.
+func TestContractWriteToEveryByte(t *testing.T) {
+	t.Parallel()
+
+	const piece = 32 << 10
+
+	all := cData(2*piece + 1)
+
+	for _, size := range []int{0, 1, 2, piece - 1, piece, piece + 1, 2 * piece, 2*piece + 1} {
+		data := all[:size]
+		file := refStream(refOptions{check: flagCRC32, dictCode: 20}, refBlocks(t, data, 9000))
+
+		for name, open := range readers() {
+			for _, first := range []int{0, 1} {
+				if first > size {
+					continue
+				}
+
+				for cname, cp := range map[string]func(w io.Writer, r *xz.Reader) (int64, error){
+					"WriteTo": func(w io.Writer, r *xz.Reader) (int64, error) { return r.WriteTo(w) },
+					"io.Copy": func(w io.Writer, r *xz.Reader) (int64, error) { return io.Copy(w, r) },
+				} {
+					what := fmt.Sprintf("%d bytes, %s, %s after a Read of %d", size, name, cname, first)
+
+					r, err := open(file)
+					if err != nil {
+						t.Fatalf("%s: %v", what, err)
+					}
+
+					if _, err = io.ReadFull(r, make([]byte, first)); err != nil {
+						t.Fatalf("%s: the Read: %v", what, err)
+					}
+
+					var w tally
+
+					n, err := cp(&w, r)
+					if err != nil || n != int64(size-first) || !bytes.Equal(w.buf.Bytes(), data[first:]) {
+						t.Errorf("%s: %d, %v; the writer got %d bytes, want the %d left",
+							what, n, err, w.buf.Len(), size-first)
+					}
+
+					if w.empty != 0 {
+						t.Errorf("%s: %d Writes of nothing", what, w.empty)
+					}
+
+					_ = r.Close()
+				}
+			}
+		}
+	}
+}
+
+// TestContractMaxDictSizeWhereItIsMet: "WithMaxDictSize bounds the dictionary a block
+// header may ask for: a block asking for more is refused with
+// ErrUnsupported", and the file is not corrupt for it. A block asking for
+// the bound itself decodes. In order and with workers on blocks decoded at
+// once, when every block asks for more and when only a later stream's do:
+// the blocks before it are read, and the one asking for more is an error,
+// never a block of no data.
+func TestContractMaxDictSizeWhereItIsMet(t *testing.T) {
+	t.Parallel()
+
+	const (
+		limit     = 1 << 20
+		atLimit   = 16 // the dictionary size code of 1 MiB
+		overLimit = 17 // of 1.5 MiB
+	)
+
+	data := cData(4000)
+	within := refStream(refOptions{check: flagCRC32, dictCode: atLimit}, refBlocks(t, data[:2000], 500))
+	over := refStream(refOptions{check: flagCRC32, dictCode: overLimit}, refBlocks(t, data[2000:], 500))
+
+	for name, tc := range map[string]struct {
+		file   []byte
+		before []byte // what is read before the refusal
+		whole  bool
+	}{
+		"every block at the bound":         {within, data[:2000], true},
+		"every block over":                 {over, nil, false},
+		"a later stream's blocks over":     {refFile(0, within, over), data[:2000], false},
+		"over, then a stream at the bound": {refFile(0, over, within), nil, false},
+	} {
+		for oname, opts := range map[string][]xz.Option{
+			"in order": {xz.WithMaxDictSize(limit)},
+			"workers":  {xz.WithMaxDictSize(limit), xz.WithWorkers(4)},
+		} {
+			var got []byte
+
+			r, err := xz.NewReader(bytes.NewReader(tc.file), opts...)
+			if err == nil {
+				got, err = io.ReadAll(r)
+				_ = r.Close()
+			}
+
+			if tc.whole {
+				if err != nil || !bytes.Equal(got, tc.before) {
+					t.Errorf("%s, %s: %d bytes, %v", name, oname, len(got), err)
+				}
+
+				continue
+			}
+
+			if !errors.Is(err, xz.ErrUnsupported) || errors.Is(err, xz.ErrCorrupt) {
+				t.Errorf("%s, %s: %v, want an error matching ErrUnsupported alone", name, oname, err)
+			}
+
+			if !bytes.Equal(got, tc.before) {
+				t.Errorf("%s, %s: %d bytes before the refusal, want %d", name, oname, len(got), len(tc.before))
+			}
+		}
+	}
+}
+
+// refIndex returns where the index of a one-stream file starts and the
+// records it holds.
+func refIndex(file []byte) (start int, records []refRecord) {
+	backward := int(binary.LittleEndian.Uint32(file[len(file)-8:]))
+	start = len(file) - 12 - (backward+1)*4
+	p := &refParser{data: file, pos: start + 1}
+
+	count, err := p.vli()
+	if err != nil {
+		panic(err)
+	}
+
+	for range count {
+		unpadded, uerr := p.vli()
+		if uerr != nil {
+			panic(uerr)
+		}
+
+		uncompressed, uerr := p.vli()
+		if uerr != nil {
+			panic(uerr)
+		}
+
+		records = append(records, refRecord{unpadded, uncompressed})
+	}
+
+	return start, records
+}
+
+// refIndexed ends a stream: to body, a stream header and what stands for
+// its blocks, it appends an index of the records given, under a valid
+// CRC-32, and the footer that goes with that index, whatever the blocks
+// are.
+func refIndexed(body []byte, records []refRecord) []byte {
+	index := []byte{0x00}
+	index = append(index, refVLI(uint64(len(records)))...)
+
+	for _, rec := range records {
+		index = append(index, refVLI(rec.unpadded)...)
+		index = append(index, refVLI(rec.uncompressed)...)
+	}
+
+	index = refPad(index)
+	index = append(index, refCRC32(index)...)
+
+	var backward [4]byte
+
+	binary.LittleEndian.PutUint32(backward[:], uint32(len(index)/4-1))
+
+	footer := append(backward[:], body[6:8]...)
+
+	out := append(bytes.Clone(body), index...)
+	out = append(out, refCRC32(footer)...)
+	out = append(out, footer...)
+
+	return append(out, "YZ"...)
+}
+
+// TestContractLyingIndexBeforeAnotherStream: an index whose records cannot
+// be those of any blocks its stream holds, under a valid index CRC and in a
+// stream with whole streams after it, is refused by the reference and, as
+// ErrCorrupt, by both readers: an unpadded size of zero, one larger than
+// the file, an uncompressed size no block of that size decodes to. The
+// reader with workers finds the streams from the end of the file, and
+// "workers change how fast a file is read and what it costs in memory, not
+// the data, nor what a file is refused as": it does not read the file as
+// the streams after the lie.
+func TestContractLyingIndexBeforeAnotherStream(t *testing.T) {
+	t.Parallel()
+
+	data := cData(1200)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	first := refStream(o, refBlocks(t, data[:600], 250))
+	later := refStream(o, refBlocks(t, data[600:], 250))
+
+	start, records := refIndex(first)
+
+	for record := range records {
+		for name, lie := range map[string]func(r *refRecord){
+			"an unpadded size of zero":              func(r *refRecord) { r.unpadded = 0 },
+			"an unpadded size past the file":        func(r *refRecord) { r.unpadded = 1 << 40 },
+			"an uncompressed size no block reaches": func(r *refRecord) { r.uncompressed = 1 << 50 },
+		} {
+			lying := slices.Clone(records)
+			lie(&lying[record])
+
+			bad := refIndexed(first[:start], lying)
+
+			for fname, file := range map[string][]byte{
+				"alone":            bad,
+				"before a stream":  refFile(0, bad, later),
+				"before padding":   refFile(8, bad, later),
+				"before two":       refFile(0, bad, later, later),
+				"between streams":  refFile(0, later, bad, later),
+				"the last of two":  refFile(0, later, bad),
+				"before an empty":  refFile(0, bad, refStream(o, nil)),
+				"an empty between": refFile(0, bad, refStream(o, nil), later),
+			} {
+				what := "record " + strconv.Itoa(record) + ", " + name + ", " + fname
+
+				if _, err := refParse(file); err == nil {
+					t.Fatalf("%s: the reference accepts the lie", what)
+				}
+
+				sequential, parallel := both(file)
+
+				if !errors.Is(sequential.err, xz.ErrCorrupt) {
+					t.Errorf("%s, sequential: %d bytes, %v, want an error matching ErrCorrupt",
+						what, len(sequential.data), sequential.err)
+				}
+
+				if !errors.Is(parallel.err, xz.ErrCorrupt) {
+					t.Errorf("%s, parallel: %d bytes, %v, want an error matching ErrCorrupt",
+						what, len(parallel.data), parallel.err)
+				}
+			}
+		}
+	}
+}
+
+// TestContractPaddingBeforeTheFirstStream: stream padding is between
+// streams or after the last. A file that opens with it holds no stream
+// where one must be: the reference refuses it and both readers do, as
+// ErrCorrupt, whether the streams after the padding have one block or
+// several to decode at once, and whatever follows them.
+func TestContractPaddingBeforeTheFirstStream(t *testing.T) {
+	t.Parallel()
+
+	data := cData(1200)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	one := refStream(o, refBlocks(t, data[:600], 0))
+	several := refStream(o, refBlocks(t, data[600:], 200))
+
+	for _, padding := range []int{4, 8, 4096, 40 << 10} {
+		for name, rest := range map[string][]byte{
+			"a stream of one block":      one,
+			"a stream of several blocks": several,
+			"two streams":                refFile(0, several, several),
+			"two streams and padding":    refFile(padding, several, one),
+			"an empty stream":            refStream(o, nil),
+		} {
+			file := append(make([]byte, padding), rest...)
+			what := strconv.Itoa(padding) + " bytes of padding, then " + name
+
+			if _, err := refParse(file); err == nil {
+				t.Fatalf("%s: the reference accepts it", what)
+			}
+
+			sequential, parallel := both(file)
+
+			if !errors.Is(sequential.err, xz.ErrCorrupt) {
+				t.Errorf("%s, sequential: %d bytes, %v, want an error matching ErrCorrupt",
+					what, len(sequential.data), sequential.err)
+			}
+
+			if !errors.Is(parallel.err, xz.ErrCorrupt) {
+				t.Errorf("%s, parallel: %d bytes, %v, want an error matching ErrCorrupt",
+					what, len(parallel.data), parallel.err)
+			}
+		}
+	}
+}
+
+// fetchFailing is a file whose nth fetch by offset fails, having read
+// nothing; every other fetch, and reading it in order, serve the file.
+type fetchFailing struct {
+	*bytes.Reader
+
+	failAt int64
+	err    error
+	// ReadAt is called from every worker.
+	fetches atomic.Int64
+}
+
+func (f *fetchFailing) ReadAt(p []byte, off int64) (int, error) {
+	if f.fetches.Add(1) == f.failAt {
+		return 0, f.err
+	}
+
+	return f.Reader.ReadAt(p, off)
+}
+
+// TestContractIndexesThatDoNotRead: with workers, "a stream decodes in
+// order, and so does a file with fewer than two blocks or one whose indexes
+// do not read", "which is then refused as it is without workers". A reader
+// with workers opens a file by fetching every stream's footer, index and
+// header from the end. When one of those fetches fails, each in turn, of
+// either of two streams, the file is read in order, where this input reads
+// fine: to the data it reads to without workers, all of it, no stream left
+// out, and the fetch that failed is nobody's error.
+func TestContractIndexesThatDoNotRead(t *testing.T) {
+	t.Parallel()
+
+	data := cData(2400)
+	o := refOptions{check: flagCRC32, dictCode: 20}
+	errSource := errors.New("the fetch failed")
+
+	for _, padding := range []int{0, 8} {
+		file := refFile(
+			padding,
+			refStream(o, refBlocks(t, data[:1200], 400)),
+			refStream(o, refBlocks(t, data[1200:], 400)),
+		)
+
+		whole := &fetchFailing{Reader: bytes.NewReader(file)}
+
+		r, err := xz.NewReader(whole, xz.WithWorkers(4))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// What a reader fetches before its first Read is what opens the
+		// file: a footer, an index and a header for each stream at least.
+		opening := whole.fetches.Load()
+		if opening < 6 {
+			t.Fatalf("padding %d: %d fetches to open two streams, want six at least", padding, opening)
+		}
+
+		_ = r.Close()
+
+		for failAt := int64(1); failAt <= opening; failAt++ {
+			in := &fetchFailing{Reader: bytes.NewReader(file), failAt: failAt, err: errSource}
+
+			r, err = xz.NewReader(in, xz.WithWorkers(4))
+			if err != nil {
+				t.Errorf("padding %d, fetch %d of %d fails: NewReader: %v", padding, failAt, opening, err)
+
+				continue
+			}
+
+			got, err := io.ReadAll(r)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Errorf("padding %d, fetch %d of %d fails: %d bytes, %v; want the file's %d",
+					padding, failAt, opening, len(got), err, len(data))
+			}
+
+			_ = r.Close()
+		}
+	}
+}
+
+// TestContractBlockHeaderSizes: "sizes that disagree" are ErrCorrupt. A
+// block header that states a compressed or an uncompressed size its block
+// does not have, under a valid header CRC-32 and with an index that tells
+// the block's true sizes, is refused by the reference and by both readers,
+// in the first block of a file and in a later one: an uncompressed size of
+// zero for a block that holds data, one byte fewer than it holds and one
+// more; a compressed size one byte fewer and one more.
+func TestContractBlockHeaderSizes(t *testing.T) {
+	t.Parallel()
+
+	data := cData(120)
+	o := refOptions{check: flagCRC32, sizes: true, dictCode: 20}
+	blocks := []refBlock{rawBlock(data[:40]), rawBlock(data[40:80]), rawBlock(data[80:])}
+	file := refStream(o, blocks)
+
+	if got, err := refParse(file); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the reference refuses its own file: %v", err)
+	}
+
+	// Every block is its 12-byte header, the size byte, the flags, the two
+	// sizes of one byte each, the filter and the CRC-32; then 44 bytes of
+	// LZMA2 and the four of the check.
+	const (
+		headerLen  = 12
+		blockLen   = headerLen + 44 + 4
+		compressed = 2
+		uncompress = 3
+	)
+
+	for block := range blocks {
+		at := xz.HeaderLen + block*blockLen
+
+		for name, lie := range map[string]struct {
+			field int
+			value byte
+		}{
+			"an uncompressed size of zero":  {uncompress, 0},
+			"an uncompressed size one less": {uncompress, 39},
+			"an uncompressed size one more": {uncompress, 41},
+			"a compressed size one less":    {compressed, 43},
+			"a compressed size one more":    {compressed, 45},
+		} {
+			bad := bytes.Clone(file)
+			header := bad[at : at+headerLen]
+
+			if header[compressed] != 44 || header[uncompress] != 40 {
+				t.Fatalf("block %d: the header is not where the test takes it to be", block)
+			}
+
+			header[lie.field] = lie.value
+			copy(header[headerLen-4:], refCRC32(header[:headerLen-4]))
+
+			what := "block " + strconv.Itoa(block) + ", " + name
+
+			if _, err := refParse(bad); err == nil {
+				t.Fatalf("%s: the reference accepts the lie", what)
+			}
+
+			sequential, parallel := both(bad)
+
+			if !errors.Is(sequential.err, xz.ErrCorrupt) {
+				t.Errorf("%s, sequential: %d bytes, %v, want an error matching ErrCorrupt",
+					what, len(sequential.data), sequential.err)
+			}
+
+			if !errors.Is(parallel.err, xz.ErrCorrupt) {
+				t.Errorf("%s, parallel: %d bytes, %v, want an error matching ErrCorrupt",
+					what, len(parallel.data), parallel.err)
+			}
+		}
 	}
 }

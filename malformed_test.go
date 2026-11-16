@@ -396,8 +396,8 @@ func TestWriterCloseTwice(t *testing.T) {
 		t.Errorf("second Close gave %v; want a match for ErrClosed", err)
 	}
 
-	if _, err = w.Write([]byte("x")); !errors.Is(err, ErrClosed) {
-		t.Errorf("Write after Close gave %v; want a match for ErrClosed", err)
+	if n, werr := w.Write([]byte("x")); n != 0 || !errors.Is(werr, ErrClosed) {
+		t.Errorf("Write after Close gave %d, %v; want 0 and a match for ErrClosed", n, werr)
 	}
 	// An empty stream must still be a valid, readable xz file.
 	r, err := NewReader(bytes.NewReader(buf.Bytes()))
