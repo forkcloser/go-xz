@@ -771,8 +771,6 @@ func (r *parallelReader) Read(p []byte) (n int, err error) {
 // WriteTo writes the whole remaining uncompressed data stream to w. It
 // avoids the intermediate copy of the Read interface by handing the
 // decoded block buffers directly to the writer.
-//
-//nolint:gocognit // delivers blocks in order, each end or error classified where it happens
 func (r *parallelReader) WriteTo(w io.Writer) (n int64, err error) {
 	// An exhausted reader has nothing left to write, which is success, not
 	// failure: io.Copy does not report io.EOF for an ordinary reader, and a
@@ -812,13 +810,6 @@ func (r *parallelReader) WriteTo(w io.Writer) (n int64, err error) {
 		if err != nil {
 			r.dec.stop()
 			return n, r.setErr(err)
-		}
-		// A writer that accepts nothing and reports no error is broken.
-		// io.Copy turns that into ErrShortWrite rather than spinning, and so
-		// must this loop.
-		if k == 0 {
-			r.dec.stop()
-			return n, r.setErr(io.ErrShortWrite)
 		}
 	}
 }

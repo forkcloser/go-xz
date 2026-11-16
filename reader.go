@@ -29,6 +29,7 @@ import (
 	"sync"
 
 	"github.com/forkcloser/xz/v2/internal/bytereader"
+	"github.com/forkcloser/xz/v2/internal/fullwrite"
 )
 
 // Reader decodes an xz file: one stream or several, concatenated with or
@@ -204,8 +205,13 @@ func (r *Reader) Close() error {
 
 // WriteTo writes the whole remaining uncompressed data to w. As with Read,
 // what reached w before an error reporting corrupt or truncated input may
-// end with bytes of the block that failed.
+// end with bytes of the block that failed. w is held to its count: a Write
+// that takes less than it was given with no error is io.ErrShortWrite, and
+// one that reports more than it was given, or less than nothing, is an
+// error too.
 func (r *Reader) WriteTo(w io.Writer) (int64, error) {
+	w = fullwrite.Writer{W: w}
+
 	if r.par != nil {
 		return r.par.WriteTo(w)
 	}
@@ -222,10 +228,6 @@ func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 
 			if werr != nil {
 				return n, werr
-			}
-
-			if written < k {
-				return n, io.ErrShortWrite
 			}
 		}
 
