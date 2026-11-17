@@ -60,8 +60,11 @@ that is also an `io.Seeker`, as a file is, and the file has two blocks or
 more. Anything else decodes in order on one worker: a stream, a file of one
 block, a reader of a single stream. Workers change how fast a file is read
 and what it costs in memory, not the data: a reader with workers holds whole
-decoded blocks, about twice the workers plus a few of them, and must be
-closed when abandoned before `io.EOF`.
+decoded blocks, about twice the workers plus a few of them, and a dictionary
+for each worker, and must be closed when abandoned before `io.EOF`. A block
+is as large as its file made it, so the reader uses as many of its workers
+as keep all of that within 1 GiB, and reads in order a file whose blocks are
+too large for two.
 
 The error `Read` returns is classified, to be matched with `errors.Is`:
 
@@ -258,7 +261,9 @@ suite runs on Linux (amd64, arm64), Windows (amd64, arm64) and macOS
   several blocks, and an input they can read by offset.
 - A reader with workers holds whole decoded blocks in memory, and a writer
   with workers whole blocks with what they compress to. Neither is bounded by
-  the dictionary size.
+  the dictionary size. A reader keeps what it holds within 1 GiB: it uses
+  fewer workers for a file of large blocks, and reads in order, on one core,
+  a file whose blocks are over 85 MiB.
 - A `Reader` reads a file from its start. It is not an `io.Seeker`, though a
   file's index would let a block be reached by its offset.
 - No 32-bit target is tested.

@@ -32,6 +32,30 @@ import (
 	"github.com/forkcloser/xz/v2/internal/fullwrite"
 )
 
+// concurrent is the reader that decodes xz's blocks with o's workers, or
+// nil when the file is to be read in order: it cannot be read from its end,
+// it has no two blocks, or its blocks are too large for two workers. A
+// block is as large as its file made it, and blocks are held whole: the
+// workers are as many as the file's largest block lets them be.
+func concurrent(xz io.Reader, o options) (*parallelReader, error) {
+	section, err := randomAccess(xz)
+	if err != nil || section == nil {
+		return nil, err
+	}
+
+	par, err := newParallelReader(section, section.Size(), o)
+	if err != nil || len(par.dec.blocks) < 2 {
+		return nil, nil //nolint:nilerr,nilnil // a file that does not read from its end is read in order, which says why
+	}
+
+	par.opts.workers = affordable(par.dec.blocks, o.workers)
+	if par.opts.workers < 2 {
+		return nil, nil //nolint:nilnil // no reader, and nothing wrong: in order
+	}
+
+	return par, nil
+}
+
 // Reader decodes an xz file: one stream or several, concatenated with or
 // without padding between them.
 //
@@ -44,9 +68,11 @@ import (
 // with one difference: a damaged size that makes a block claim more than
 // the file holds is corrupt to a reader that knows where the file ends, and
 // a file cut short to one that reads in order. A reader with workers holds
-// whole decoded blocks, about twice the workers plus a few of them,
-// whatever WithMaxDictSize says. It must be closed when abandoned before
-// io.EOF. The decoded stream is presented in order through Read and
+// whole decoded blocks, about twice the workers plus a few of them, and a
+// dictionary for each worker, whatever WithMaxDictSize says, and within
+// 1 GiB whatever the file says: it uses fewer workers for a file of large
+// blocks, and reads in order one whose blocks are too large for two. It must be closed when abandoned
+// before io.EOF. The decoded stream is presented in order through Read and
 // WriteTo.
 type Reader struct {
 	opts options
@@ -99,19 +125,12 @@ func NewReader(xz io.Reader, opts ...Option) (r *Reader, err error) {
 	// it does without workers; so is a file with no two blocks to decode at
 	// once, and so is the one stream of a single-stream reader.
 	if o.workers > 1 && !o.singleStream {
-		var section *io.SectionReader
-
-		if section, err = randomAccess(xz); err != nil {
+		if r.par, err = concurrent(xz, o); err != nil {
 			return nil, err
 		}
 
-		if section != nil {
-			par, perr := newParallelReader(section, section.Size(), o)
-			if perr == nil && len(par.dec.blocks) > 1 {
-				r.par = par
-
-				return r, nil
-			}
+		if r.par != nil {
+			return r, nil
 		}
 	}
 

@@ -118,7 +118,10 @@ func WithSingleStream() Option {
 // file with fewer than two blocks, and a file whose indexes do not read,
 // which is then refused as it is without workers. A reader with workers
 // holds whole decoded blocks, about twice the workers plus a few of them,
-// and must be closed when abandoned before io.EOF.
+// and a dictionary for each worker, and a block is as large as its file
+// made it: the reader uses as many of its workers as keep all of that
+// within 1 GiB, and reads in order a file whose blocks are too large for
+// two. It must be closed when abandoned before io.EOF.
 //
 // A writer given any value but one cuts the data into blocks of
 // WithBlockSize, or without it of three times the dictionary size and at
