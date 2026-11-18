@@ -82,7 +82,9 @@ func checkUncompressedSize(rec record) error {
 // package's writer with WithBlockSize — decode with real
 // concurrency; a single-block file decodes on one worker. Memory in flight
 // is a bounded number of uncompressed blocks, about twice the workers plus
-// a few: the decoded queue, the block being read, and the buffer pool.
+// a few: the decoded queue, the block being read, and the buffer pool; and
+// a dictionary under each worker, up to a block's size. The workers are as
+// many as keep that within parallelMemory for the file's largest block.
 //
 // The parallelReader verifies the block checks, the block sizes against
 // the index, and the header, footer and index checksums of every
@@ -153,6 +155,34 @@ type blockResult struct {
 type blockWork struct {
 	d      blockDesc
 	result chan blockResult
+}
+
+// parallelMemory bounds what a reader with workers holds for the blocks it
+// decodes. Nothing in the format bounds a block: without this, a file of a
+// few hundred kilobytes makes its reader hold gigabytes.
+const parallelMemory = 1 << 30
+
+// affordable is how many of the workers asked for a file's blocks allow
+// within parallelMemory: fewer than two when its largest block is too
+// large for any. A reader with n workers holds up to 3n+6 times its largest
+// block: n+2 blocks in flight, the one being read, n+3 spare buffers, and
+// under each worker a dictionary that grows to what its block decodes to.
+func affordable(blocks []blockDesc, workers int) int {
+	const (
+		perWorker = 3
+		spare     = 6
+	)
+
+	var largest int64
+	for i := range blocks {
+		largest = max(largest, blocks[i].uncompressedSize)
+	}
+
+	if largest == 0 {
+		return workers
+	}
+
+	return int(min(int64(workers), (parallelMemory/largest-spare)/perWorker))
 }
 
 // newParallelReader creates a reader that decodes the blocks of the xz file
