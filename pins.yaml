@@ -10,7 +10,7 @@
 pins:
   - name: xz-utils-linux-amd64
     renovate: github-releases forkcloser/testbin
-    version: 0.4.0
+    version: 0.5.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-linux-amd64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
@@ -19,7 +19,7 @@ pins:
       sha256: f39fdc0e858854a5eb9bac9cf67e739ac019fd568fddb5e0ae5c30f1d84dad5c
   - name: xz-utils-linux-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.4.0
+    version: 0.5.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-linux-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
@@ -28,7 +28,7 @@ pins:
       sha256: c0d96fe59aa2163384ed82fa4f4d3ad7d2f1a9e74e89b32a5751357237743292
   - name: xz-utils-darwin-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.4.0
+    version: 0.5.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-darwin-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
@@ -37,7 +37,7 @@ pins:
       sha256: 761f4154de75371dc3d4ac35d29619ee5dd615a9b6c186e1f72b20592ceb0ee4
   - name: xz-utils-windows-amd64
     renovate: github-releases forkcloser/testbin
-    version: 0.4.0
+    version: 0.5.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-windows-amd64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
@@ -46,7 +46,7 @@ pins:
       sha256: 7a31b1f4a7dd7224a467c88a9e7a5447d037596ad45567eef8de329b4e300e39
   - name: xz-utils-windows-arm64
     renovate: github-releases forkcloser/testbin
-    version: 0.4.0
+    version: 0.5.0
     url: https://github.com/forkcloser/testbin/releases/download/v${version}/xz-windows-arm64.tar.gz
     verify: github-attestation forkcloser/testbin forkcloser/testbin/.github/workflows/release.yaml
     digest:
