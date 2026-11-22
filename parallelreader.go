@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+
+	"github.com/forkcloser/xz/v2/internal/sysmem"
 )
 
 // A block decoder that panicked instead of returning.
@@ -84,7 +86,8 @@ func checkUncompressedSize(rec record) error {
 // is a bounded number of uncompressed blocks, about twice the workers plus
 // a few: the decoded queue, the block being read, and the buffer pool; and
 // a dictionary under each worker, up to a block's size. The workers are as
-// many as keep that within parallelMemory for the file's largest block.
+// many as keep that within the reader's memory limit for the file's largest
+// block.
 //
 // The parallelReader verifies the block checks, the block sizes against
 // the index, and the header, footer and index checksums of every
@@ -157,17 +160,38 @@ type blockWork struct {
 	result chan blockResult
 }
 
-// parallelMemory bounds what a reader with workers holds for the blocks it
-// decodes. Nothing in the format bounds a block: without this, a file of a
-// few hundred kilobytes makes its reader hold gigabytes.
-const parallelMemory = 1 << 30
+// Nothing in the format bounds a block, and a reader with workers holds
+// blocks whole: without a limit, a file of a few hundred kilobytes makes
+// its reader hold gigabytes. The limit is the caller's (WithMemoryLimit),
+// or this share of the memory the process can have, which is what xz takes
+// for --memlimit-mt-decompress; and unknownMemoryLimit where the system
+// does not say how much that is.
+const (
+	memoryShare        = 4
+	unknownMemoryLimit = 1 << 30
+)
+
+// memoryLimit is what a reader with o's workers may hold for its blocks.
+func memoryLimit(o options) int64 {
+	if o.set&optMemoryLimit != 0 {
+		return o.memoryLimit
+	}
+
+	total := sysmem.Total()
+	if total == 0 {
+		return unknownMemoryLimit
+	}
+
+	// #nosec G115 -- a quarter of a uint64 fits an int64
+	return int64(total / memoryShare)
+}
 
 // affordable is how many of the workers asked for a file's blocks allow
-// within parallelMemory: fewer than two when its largest block is too
-// large for any. A reader with n workers holds up to 3n+6 times its largest
-// block: n+2 blocks in flight, the one being read, n+3 spare buffers, and
-// under each worker a dictionary that grows to what its block decodes to.
-func affordable(blocks []blockDesc, workers int) int {
+// within limit: fewer than two when its largest block is too large for
+// any. A reader with n workers holds up to 3n+6 times its largest block:
+// n+2 blocks in flight, the one being read, n+3 spare buffers, and under
+// each worker a dictionary that grows to what its block decodes to.
+func affordable(blocks []blockDesc, workers int, limit int64) int {
 	const (
 		perWorker = 3
 		spare     = 6
@@ -182,7 +206,7 @@ func affordable(blocks []blockDesc, workers int) int {
 		return workers
 	}
 
-	return int(min(int64(workers), (parallelMemory/largest-spare)/perWorker))
+	return int(min(int64(workers), (limit/largest-spare)/perWorker))
 }
 
 // newParallelReader creates a reader that decodes the blocks of the xz file

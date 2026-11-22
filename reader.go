@@ -48,7 +48,7 @@ func concurrent(xz io.Reader, o options) (*parallelReader, error) {
 		return nil, nil //nolint:nilerr,nilnil // a file that does not read from its end is read in order, which says why
 	}
 
-	par.opts.workers = affordable(par.dec.blocks, o.workers)
+	par.opts.workers = affordable(par.dec.blocks, o.workers, memoryLimit(o))
 	if par.opts.workers < 2 {
 		return nil, nil //nolint:nilnil // no reader, and nothing wrong: in order
 	}

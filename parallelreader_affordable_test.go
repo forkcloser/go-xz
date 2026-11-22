@@ -7,19 +7,25 @@ package xz //nolint:testpackage // white-box: from outside, the workers a file g
 import (
 	"bytes"
 	"testing"
+
+	"github.com/forkcloser/xz/v2/internal/sysmem"
 )
 
 // TestAffordableWorkers: a reader "uses as many of its workers as keep all
-// of that within 1 GiB": never more than it was asked for, as many as
-// three blocks a worker and six more allow for the file's largest block,
-// wherever in the file that block is, and fewer than two, which is read in
-// order, when the largest is too large for two. It is tested from inside
-// the package: from outside, the workers a file gets are seen only by what
-// they hold, and at the bound that is the gigabyte.
+// of that within its memory limit": never more than it was asked for, as
+// many as three blocks a worker and six more allow for the file's largest
+// block, wherever in the file that block is, and fewer than two, which is
+// read in order, when the largest is too large for two. The rows are at a
+// limit of 1 GiB, then at others. It is tested from inside the package:
+// from outside, the workers a file gets are seen only by what they hold,
+// and at the limit that is gigabytes.
 func TestAffordableWorkers(t *testing.T) {
 	t.Parallel()
 
-	const mib = 1 << 20
+	const (
+		mib = 1 << 20
+		gib = 1 << 30
+	)
 
 	sized := func(sizes ...int64) []blockDesc {
 		blocks := make([]blockDesc, len(sizes))
@@ -45,23 +51,73 @@ func TestAffordableWorkers(t *testing.T) {
 		"too large for one":                {sized(512*mib, 512*mib), 8, -1},
 		"blocks of no size":                {sized(0, 0), 8, 8},
 	} {
-		got := affordable(row.blocks, row.asked)
+		got := affordable(row.blocks, row.asked, gib)
 		if got != row.want {
 			t.Errorf("%s: %d workers, want %d", name, got, row.want)
 		}
 
 		// Whatever it answers above one is within the bound.
 		if largest := max(row.blocks[0].uncompressedSize, row.blocks[len(row.blocks)-1].uncompressedSize); got > 1 &&
-			int64(3*got+6)*largest > parallelMemory {
+			int64(3*got+6)*largest > gib {
 			t.Errorf("%s: %d workers hold %d MiB", name, got, int64(3*got+6)*largest/mib)
 		}
+	}
+
+	// What xz -T -9 writes, blocks of 192 MiB: one core within 1 GiB or 2,
+	// eight workers of eight within 16, and of sixty-four the twenty-six
+	// that 16 GiB holds.
+	nine := sized(192*mib, 192*mib, 192*mib)
+
+	for _, row := range []struct {
+		asked int
+		limit int64
+		want  int
+	}{
+		{8, gib, 0},
+		{8, 2 * gib, 1},
+		{8, 16 * gib, 8},
+		{64, 16 * gib, 26},
+	} {
+		if got := affordable(nine, row.asked, row.limit); got != row.want {
+			t.Errorf("192 MiB blocks, %d asked, %d GiB: %d workers, want %d", row.asked, row.limit/gib, got, row.want)
+		}
+	}
+}
+
+// TestMemoryLimit: the limit is WithMemoryLimit's when it is given, and
+// without it a quarter of the memory the system reports for the process,
+// or 1 GiB when the system reports none.
+func TestMemoryLimit(t *testing.T) {
+	t.Parallel()
+
+	given, err := apply([]Option{WithWorkers(4), WithMemoryLimit(3 << 30)}, readerOptions, "NewReader")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := memoryLimit(given); got != 3<<30 {
+		t.Errorf("with WithMemoryLimit(3 GiB): %d", got)
+	}
+
+	plain, err := apply([]Option{WithWorkers(4)}, readerOptions, "NewReader")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := int64(unknownMemoryLimit)
+	if total := sysmem.Total(); total != 0 {
+		want = int64(total / 4)
+	}
+
+	if got := memoryLimit(plain); got != want {
+		t.Errorf("without the option: %d, want %d", got, want)
 	}
 }
 
 // TestConcurrentTakesTheWorkersItCanAfford: the reader a file gets has the
 // workers its largest block allows, not the ones it was asked for. Three
-// blocks of 24 MiB with 64 asked are read by 12: 64 would hold 198 blocks,
-// 4.6 GiB. Nothing is decoded: the count is read off the reader.
+// blocks of 24 MiB with 64 asked are read by 12 within 1 GiB: 64 would hold
+// 198 blocks, 4.6 GiB. Nothing is decoded: the count is read off the reader.
 func TestConcurrentTakesTheWorkersItCanAfford(t *testing.T) {
 	t.Parallel()
 
@@ -85,7 +141,7 @@ func TestConcurrentTakesTheWorkersItCanAfford(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	o, err := apply([]Option{WithWorkers(64)}, readerOptions, "NewReader")
+	o, err := apply([]Option{WithWorkers(64), WithMemoryLimit(1 << 30)}, readerOptions, "NewReader")
 	if err != nil {
 		t.Fatal(err)
 	}

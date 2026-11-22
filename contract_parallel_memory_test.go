@@ -66,9 +66,10 @@ func live() uint64 {
 
 // TestContractReaderWithWorkersHoldsWithinItsBound: "a block is as large as
 // its file made it", and a reader with workers "reads in order a file whose
-// blocks are too large for two": a file of two blocks of 128 MiB, a few
-// kilobytes long, is read with workers without either block being held
-// whole, and reads as what it holds. It runs alone: it measures the heap.
+// blocks are too large for two" within its memory limit: a file of two
+// blocks of 128 MiB, a few kilobytes long, is read with workers and a limit
+// of 1 GiB without either block being held whole, and reads as what it
+// holds. It runs alone: it measures the heap.
 //
 //nolint:paralleltest // the heap it measures is every test's
 func TestContractReaderWithWorkersHoldsWithinItsBound(t *testing.T) {
@@ -81,7 +82,7 @@ func TestContractReaderWithWorkersHoldsWithinItsBound(t *testing.T) {
 
 	before := live()
 
-	reader, err := xz.NewReader(bytes.NewReader(file), xz.WithWorkers(4))
+	reader, err := xz.NewReader(bytes.NewReader(file), xz.WithWorkers(4), xz.WithMemoryLimit(1<<30))
 	if err != nil {
 		t.Fatal(err)
 	}

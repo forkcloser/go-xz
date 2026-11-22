@@ -30,6 +30,9 @@ type options struct {
 	maxDictSize  int64
 	singleStream bool
 	workers      int
+	// memoryLimit: what a reader with workers may hold for its blocks, 0
+	// until the reader asks the system.
+	memoryLimit int64
 	// blocks: the writer cuts blocks and encodes them concurrently. Set by
 	// WithWorkers with any value but one, whatever number of workers that
 	// comes to: what a file holds cannot depend on the CPUs it was made on.
@@ -49,6 +52,7 @@ const (
 	optMaxDictSize optionSet = 1 << iota
 	optSingleStream
 	optWorkers
+	optMemoryLimit
 	optDictSize
 	optProperties
 	optBlockSize
@@ -57,7 +61,7 @@ const (
 )
 
 const (
-	readerOptions = optMaxDictSize | optSingleStream | optWorkers
+	readerOptions = optMaxDictSize | optSingleStream | optWorkers | optMemoryLimit
 	writerOptions = optWorkers | optDictSize | optProperties | optBlockSize | optCheck | optFilters
 )
 
@@ -66,6 +70,7 @@ var (
 	errOptionScope   = errors.New("xz: option does not apply to this constructor")
 	errMaxDictSize   = errors.New("xz: dictionary size limit out of range")
 	errWorkers       = errors.New("xz: workers must be positive")
+	errMemoryLimit   = errors.New("xz: memory limit must be positive")
 	errDictSize      = errors.New("xz: dictionary size out of range")
 	errProperties    = errors.New("xz: lc, lp or pb out of range")
 	errBlockSize     = errors.New("xz: block size must be positive")
@@ -120,8 +125,9 @@ func WithSingleStream() Option {
 // holds whole decoded blocks, about twice the workers plus a few of them,
 // and a dictionary for each worker, and a block is as large as its file
 // made it: the reader uses as many of its workers as keep all of that
-// within 1 GiB, and reads in order a file whose blocks are too large for
-// two. It must be closed when abandoned before io.EOF.
+// within its memory limit (WithMemoryLimit), and reads in order a file
+// whose blocks are too large for two. It must be closed when abandoned
+// before io.EOF.
 //
 // A writer given any value but one cuts the data into blocks of
 // WithBlockSize, or without it of three times the dictionary size and at
@@ -140,6 +146,24 @@ func WithWorkers(n int) Option {
 	return Option{"WithWorkers", func(o *options) {
 		o.set |= optWorkers
 		o.workers = n
+	}}
+}
+
+// WithMemoryLimit sets how much a reader with workers may hold for the
+// blocks it decodes, in bytes. It changes how many of its workers the
+// reader uses, never whether a file is read or what reading it says: a file
+// whose blocks are too large for two workers within the limit is read in
+// order, on one core, as xz --memlimit-mt-decompress has it. Without the
+// option the limit is a quarter of the memory the process can have, which
+// is xz's share: the machine's, or what is lower of its control group's
+// limit, as in a container, and the program's own (GOMEMLIMIT); and 1 GiB
+// where nothing says. The limit is each reader's: a program that reads
+// files it does not trust with workers, several at once, sets one. It does
+// nothing without WithWorkers. NewReader.
+func WithMemoryLimit(n int64) Option {
+	return Option{"WithMemoryLimit", func(o *options) {
+		o.set |= optMemoryLimit
+		o.memoryLimit = n
 	}}
 }
 
@@ -399,6 +423,10 @@ func (o *options) validate() error {
 
 	if o.workers < 1 {
 		return fmt.Errorf("%w: %d", errWorkers, o.workers)
+	}
+
+	if o.set&optMemoryLimit != 0 && o.memoryLimit < 1 {
+		return fmt.Errorf("%w: %d", errMemoryLimit, o.memoryLimit)
 	}
 
 	if !(lzma.MinDictSize <= o.dictSize && int64(o.dictSize) <= lzma.MaxDictSize) {
