@@ -320,6 +320,7 @@ func TestOptionValidation(t *testing.T) {
 		"lc out of range":    WithProperties(9, 0, 0),
 		"lc+lp above four":   WithProperties(3, 2, 0),
 		"negative workers":   WithWorkers(-1),
+		"a reader's limit":   WithMemoryLimit(1 << 30),
 	}
 	// A dictionary size above lzma.MaxDictSize (1<<32 - 1) is representable
 	// only where int is 64 bits wide. On a 32-bit platform every positive int
@@ -359,6 +360,8 @@ func TestOptionValidation(t *testing.T) {
 		"writer option":    {WithBlockSize(1), errOptionScope},
 		"tiny limit":       {WithMaxDictSize(1), errMaxDictSize},
 		"negative workers": {WithWorkers(-1), errWorkers},
+		"no memory":        {WithMemoryLimit(0), errMemoryLimit},
+		"negative memory":  {WithMemoryLimit(-1), errMemoryLimit},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
