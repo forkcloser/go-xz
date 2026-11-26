@@ -9,8 +9,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/dictsize"
-	"github.com/forkcloser/xz/v2/internal/fullwrite"
+	"github.com/forkcloser/go-xz/v2/internal/dictsize"
+	"github.com/forkcloser/go-xz/v2/internal/fullwrite"
 )
 
 // MinDictSize and MaxDictSize bound the dictionary size.

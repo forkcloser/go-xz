@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/forkcloser/xz/v2"
+	"github.com/forkcloser/go-xz/v2"
 )
 
 // gatedReaderAt serves the first open bytes of data and its last tail

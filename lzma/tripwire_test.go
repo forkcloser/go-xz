@@ -11,8 +11,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/lzmaspec"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/internal/lzmaspec"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // seeded is the tripwire's source of numbers: a PCG stream, which the

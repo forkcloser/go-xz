@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/forkcloser/xz/v2"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // The BCJ and delta filters, held to XZ Utils: testdata/filters holds, for

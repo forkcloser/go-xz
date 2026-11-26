@@ -12,7 +12,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // plainReader is an io.Reader that is deliberately not an io.ByteReader, and

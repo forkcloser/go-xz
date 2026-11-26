@@ -14,8 +14,8 @@ import (
 	upstream "github.com/ulikunitz/xz"
 	upstreamlzma "github.com/ulikunitz/xz/lzma"
 
-	fork "github.com/forkcloser/xz/v2"
-	forklzma "github.com/forkcloser/xz/v2/lzma"
+	fork "github.com/forkcloser/go-xz/v2"
+	forklzma "github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // corpora returns the inputs both sides are driven with: the shapes a

@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/forkcloser/xz/v2"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // compressible returns n bytes that LZMA shortens, the same for a seed.

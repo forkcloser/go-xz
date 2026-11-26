@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // Sentinel errors that callers can test for with errors.Is.

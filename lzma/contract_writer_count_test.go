@@ -9,7 +9,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // byteMiscounter is miscounter as a destination that takes single bytes as

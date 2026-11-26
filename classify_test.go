@@ -10,7 +10,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // The package promises that every error meaning "this input is not valid xz"

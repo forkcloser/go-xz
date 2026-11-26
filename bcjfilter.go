@@ -9,7 +9,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/filters"
+	"github.com/forkcloser/go-xz/v2/internal/filters"
 )
 
 // The non-LZMA2 filters of a block header: each wraps the next filter's

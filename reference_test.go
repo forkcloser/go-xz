@@ -12,7 +12,7 @@ import (
 	"hash/crc32"
 	"hash/crc64"
 
-	"github.com/forkcloser/xz/v2/internal/lzmaspec"
+	"github.com/forkcloser/go-xz/v2/internal/lzmaspec"
 )
 
 // The reference container: a .xz stream written and read from the file

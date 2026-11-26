@@ -12,7 +12,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/forkcloser/xz/v2/internal/fullwrite"
+	"github.com/forkcloser/go-xz/v2/internal/fullwrite"
 )
 
 // Filter lists the writer refuses, and a size it cannot count.

@@ -11,12 +11,12 @@ This module began as a fork of
 upstream, what was changed, and where the two have since parted is recorded
 in [UPSTREAM.md](./UPSTREAM.md); from v2 the API is this module's own. The
 command-line tool built on it is
-[forkcloser/compress](https://github.com/forkcloser/compress)'s `xz`.
+[forkcloser/go-compress](https://github.com/forkcloser/go-compress)'s `xz`.
 
 ## Install
 
 ```
-go get github.com/forkcloser/xz/v2
+go get github.com/forkcloser/go-xz/v2
 ```
 
 Go 1.26 or later. The module requires nothing but the standard library.
@@ -165,15 +165,17 @@ header declared.
 
 ## Migrating from v1
 
-v1 is `github.com/forkcloser/xz`, through v1.1.2. The formats are the
-standard ones in both. `xz.NewReader(r)`, `xz.NewWriter(w)` and their `lzma`
+v1 is `github.com/forkcloser/xz`, through v1.1.2, under the repository's
+former name; so are v2's release candidates through v2.0.0-rc.3, as
+`github.com/forkcloser/xz/v2`. The formats are the standard ones in both.
+`xz.NewReader(r)`, `xz.NewWriter(w)` and their `lzma`
 counterparts compile unchanged but for `lzma.NewReader2`; the configuration
 structs and their `Verify` are gone, and a constructor returns the error an
 option earns.
 
 | v1 | v2 |
 | --- | --- |
-| `import "github.com/forkcloser/xz"`, `.../lzma` | `import "github.com/forkcloser/xz/v2"`, `.../v2/lzma` |
+| `import "github.com/forkcloser/xz"`, `.../lzma` | `import "github.com/forkcloser/go-xz/v2"`, `.../v2/lzma` |
 | `xz.ReaderConfig{SingleStream: true}.NewReader(r)` | `xz.NewReader(r, xz.WithSingleStream())` |
 | `xz.ReaderConfig{DictCap: n}`, a floor | nothing: the dictionary is what each block asks for. `xz.WithMaxDictSize(n)` is a limit, which v1 did not have |
 | `xz.NewParallelReader(ra, size)` | `xz.NewReader(io.NewSectionReader(ra, 0, size), xz.WithWorkers(0))`; a file is passed as it is |
@@ -198,7 +200,7 @@ option earns.
 | `lzma.ByteReader`, `lzma.EncodeDictCap`, `lzma.DecodeDictCap` | gone |
 
 What a call that still compiles does differently is in the notes of the
-[releases](https://github.com/forkcloser/xz/releases), the breaking changes
+[releases](https://github.com/forkcloser/go-xz/releases), the breaking changes
 under their own heading.
 
 ## Performance

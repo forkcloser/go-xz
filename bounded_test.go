@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/forkcloser/xz/v2"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // writeAll writes data through w in the given pieces and closes it.

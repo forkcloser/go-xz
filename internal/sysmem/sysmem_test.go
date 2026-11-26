@@ -10,7 +10,7 @@ import (
 	"runtime/debug"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/sysmem"
+	"github.com/forkcloser/go-xz/v2/internal/sysmem"
 )
 
 // TestTotal: on the platforms that say, the memory the process can have is

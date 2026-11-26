@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/forkcloser/xz/v2"
+	"github.com/forkcloser/go-xz/v2"
 )
 
 // gatedSource is a ReaderAt whose reads, once armed, wait until the gate

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/bytereader"
+	"github.com/forkcloser/go-xz/v2/internal/bytereader"
 )
 
 // errNoProgress is a decoder that returned neither data nor an error.

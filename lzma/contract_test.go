@@ -32,8 +32,8 @@ import (
 	"testing/iotest"
 	"time"
 
-	"github.com/forkcloser/xz/v2/internal/lzmaspec"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/internal/lzmaspec"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // corpus is the inputs every contract runs over: empty, one byte, a chunk

@@ -12,8 +12,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/forkcloser/xz/v2"
-	"github.com/forkcloser/xz/v2/internal/randtxt"
+	"github.com/forkcloser/go-xz/v2"
+	"github.com/forkcloser/go-xz/v2/internal/randtxt"
 )
 
 func TestWriter(t *testing.T) {
