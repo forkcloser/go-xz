@@ -10,8 +10,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/lzmaspec"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/internal/lzmaspec"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // TestWriter2SmallDictIncompressible verifies that a writer with a small

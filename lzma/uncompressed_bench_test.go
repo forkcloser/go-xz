@@ -10,7 +10,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // BenchmarkReader2Uncompressed decodes a sequence of uncompressed chunks,

@@ -8,7 +8,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/dictsize"
+	"github.com/forkcloser/go-xz/v2/internal/dictsize"
 )
 
 // TestCodes: the 41 dictionary codes decode to 2^n and 2^n+2^(n-1) up to

@@ -28,8 +28,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/forkcloser/xz/v2/internal/bytereader"
-	"github.com/forkcloser/xz/v2/internal/fullwrite"
+	"github.com/forkcloser/go-xz/v2/internal/bytereader"
+	"github.com/forkcloser/go-xz/v2/internal/fullwrite"
 )
 
 // concurrent is the reader that decodes xz's blocks with o's workers, or

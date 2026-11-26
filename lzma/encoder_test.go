@@ -11,7 +11,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/randtxt"
+	"github.com/forkcloser/go-xz/v2/internal/randtxt"
 )
 
 const testString = `LZMA decoder test example

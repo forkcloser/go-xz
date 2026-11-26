@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/forkcloser/xz/v2/internal/hash"
+	"github.com/forkcloser/go-xz/v2/internal/hash"
 )
 
 // What newHashTable and the table's word lookups refuse.

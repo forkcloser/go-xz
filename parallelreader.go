@@ -15,7 +15,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/forkcloser/xz/v2/internal/sysmem"
+	"github.com/forkcloser/go-xz/v2/internal/sysmem"
 )
 
 // A block decoder that panicked instead of returning.

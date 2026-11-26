@@ -39,8 +39,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/forkcloser/xz/v2"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // cData is n bytes of text with a random run in the middle.

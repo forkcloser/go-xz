@@ -9,7 +9,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/fullwrite"
+	"github.com/forkcloser/go-xz/v2/internal/fullwrite"
 )
 
 // Chunks Writer2 will not write.

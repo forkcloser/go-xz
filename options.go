@@ -11,8 +11,8 @@ import (
 	"runtime"
 	"slices"
 
-	"github.com/forkcloser/xz/v2/internal/filters"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/internal/filters"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // An Option configures a Reader or a Writer. Each option names the

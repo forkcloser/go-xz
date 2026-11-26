@@ -73,8 +73,8 @@ golangci:
         ignore-package-globs:
           # This module's own packages: their errors are already classified
           # (ErrCorrupt, ErrUnsupported) and say what they refuse.
-          - github.com/forkcloser/xz
-          - github.com/forkcloser/xz/*
+          - github.com/forkcloser/go-xz
+          - github.com/forkcloser/go-xz/*
           # os errors are *PathError and *LinkError: the operation and the
           # path are already in them.
           - os

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/filters"
+	"github.com/forkcloser/go-xz/v2/internal/filters"
 )
 
 // bcjIDs lists every BCJ filter with its alignment.

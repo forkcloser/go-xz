@@ -15,7 +15,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/bytereader"
+	"github.com/forkcloser/go-xz/v2/internal/bytereader"
 )
 
 // Reader provides a reader for LZMA files or streams.

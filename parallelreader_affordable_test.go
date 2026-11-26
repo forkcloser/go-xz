@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/sysmem"
+	"github.com/forkcloser/go-xz/v2/internal/sysmem"
 )
 
 // TestAffordableWorkers: a reader "uses as many of its workers as keep all

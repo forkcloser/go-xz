@@ -13,8 +13,8 @@ import (
 	"hash/crc32"
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/bytereader"
-	"github.com/forkcloser/xz/v2/internal/filters"
+	"github.com/forkcloser/go-xz/v2/internal/bytereader"
+	"github.com/forkcloser/go-xz/v2/internal/filters"
 )
 
 // Values the footer and block-header encoders refuse to write.

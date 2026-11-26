@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // tailReader is a reader over a chunk sequence followed by a suffix that

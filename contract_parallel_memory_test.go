@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/forkcloser/xz/v2"
+	"github.com/forkcloser/go-xz/v2"
 )
 
 // zeroBlocks is an xz file of count blocks, each of size zero bytes: a few

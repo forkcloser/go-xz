@@ -13,7 +13,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/forkcloser/xz/v2"
+	"github.com/forkcloser/go-xz/v2"
 )
 
 // bothReaders decodes data with the sequential and the parallel reader and

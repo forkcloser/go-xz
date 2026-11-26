@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // FuzzClassic holds the classic reader to the reference decoder on

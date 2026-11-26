@@ -7,8 +7,8 @@ package xz
 import (
 	"io"
 
-	"github.com/forkcloser/xz/v2/internal/dictsize"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2/internal/dictsize"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // LZMA filter constants.

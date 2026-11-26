@@ -9,7 +9,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/forkcloser/xz/v2"
+	"github.com/forkcloser/go-xz/v2"
 )
 
 // TestParallelReaderSizeThatLies: a size larger than the bytes the

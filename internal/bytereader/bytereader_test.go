@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forkcloser/xz/v2/internal/bytereader"
+	"github.com/forkcloser/go-xz/v2/internal/bytereader"
 )
 
 // emptyReader returns (0, nil) forever.

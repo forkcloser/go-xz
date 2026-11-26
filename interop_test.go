@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forkcloser/xz/v2"
-	"github.com/forkcloser/xz/v2/lzma"
+	"github.com/forkcloser/go-xz/v2"
+	"github.com/forkcloser/go-xz/v2/lzma"
 )
 
 // The interop lane: XZ Utils, the reference implementation, as the oracle.
