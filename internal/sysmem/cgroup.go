@@ -6,11 +6,12 @@ package sysmem
 
 import (
 	"bytes"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
+
+	"github.com/forkcloser/go-xos"
 )
 
 // confinedBy is the lowest memory limit among the control groups the
@@ -21,7 +22,7 @@ import (
 // as a container's own is not, is read from the parents that are.
 func confinedBy(membership, root string) uint64 {
 	// #nosec G304 -- the kernel's listing of the process's own groups
-	listing, err := os.ReadFile(membership)
+	listing, err := xos.ReadFile(membership)
 	if err != nil {
 		return 0
 	}
@@ -54,7 +55,7 @@ func lowestUnder(mount, name, file string) uint64 {
 
 	for dir := filepath.Join(mount, filepath.FromSlash(name)); ; dir = filepath.Dir(dir) {
 		// #nosec G304 -- a path under the control group mount, named by the kernel's own listing
-		if text, err := os.ReadFile(filepath.Join(dir, file)); err == nil {
+		if text, err := xos.ReadFile(filepath.Join(dir, file)); err == nil {
 			if limit, limited := limitOf(text); limited && (lowest == 0 || limit < lowest) {
 				lowest = limit
 			}

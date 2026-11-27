@@ -2,9 +2,10 @@
 
 The [`.xz` file format](https://tukaani.org/xz/xz-file-format.txt) for
 Go, read and written, with the classic `.lzma` format and raw LZMA2 beside
-it: pure Go, with no dependency and no cgo. The reader decodes every filter
-the format defines, and both reader and writer work on several blocks of a
-file at once.
+it: pure Go, with no cgo and one dependency,
+[go-xos](https://github.com/forkcloser/go-xos), which has none. The reader
+decodes every filter the format defines, and both reader and writer work on
+several blocks of a file at once.
 
 This module began as a fork of
 [ulikunitz/xz](https://github.com/ulikunitz/xz). What was taken from

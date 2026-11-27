@@ -19,6 +19,12 @@ golangci:
         - path: ^internal/randtxt/englm3\.go$
           linters:
             - misspell
+        # The tests open the files of a test's own directory and of the
+        # repository, which no other process renames or removes.
+        - path: _test\.go
+          linters:
+            - forbidigo
+          text: go-xos
         # A test's failure fixtures are dynamic errors on purpose: each one
         # is the error a fake reader or writer returns, compared by identity.
         - path: _test\.go
@@ -78,6 +84,22 @@ golangci:
           # os errors are *PathError and *LinkError: the operation and the
           # path are already in them.
           - os
+          # go-xos hands on os's errors as they are.
+          - github.com/forkcloser/go-xos
+      depguard:
+        rules:
+          main:
+            allow:
+              # The files the package opens itself, the control groups'
+              # listings of the memory the process may use, through the one
+              # way this organization opens files.
+              - github.com/forkcloser/go-xos
+      forbidigo:
+        forbid:
+          # The codec reads an io.Reader and writes an io.Writer; what the
+          # package opens by itself goes through go-xos.
+          - pattern: '^os\.(Open|OpenFile|Create|CreateTemp|MkdirTemp|ReadFile|WriteFile|ReadDir|Rename|Stat|Truncate)$'
+            msg: "open files through github.com/forkcloser/go-xos"
       exhaustive:
         # The LZMA2 chunk-state machine and the chunk reader and writer end
         # their switches in a default that says what every other value does,
