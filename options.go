@@ -154,12 +154,11 @@ func WithWorkers(n int) Option {
 // reader uses, never whether a file is read or what reading it says: a file
 // whose blocks are too large for two workers within the limit is read in
 // order, on one core, as xz --memlimit-mt-decompress has it. Without the
-// option the limit is a quarter of the memory the process can have, which
-// is xz's share: the machine's, or what is lower of its control group's
-// limit, as in a container, and the program's own (GOMEMLIMIT); and 1 GiB
-// where nothing says. The limit is each reader's: a program that reads
-// files it does not trust with workers, several at once, sets one. It does
-// nothing without WithWorkers. NewReader.
+// option the limit is 1 GiB, on every machine: the reader does not look at
+// how much memory there is, which is its program's to know and to say. The
+// limit is each reader's: a program that reads several files at once with
+// workers divides what it has among them. It does nothing without
+// WithWorkers. NewReader.
 func WithMemoryLimit(n int64) Option {
 	return Option{"WithMemoryLimit", func(o *options) {
 		o.set |= optMemoryLimit

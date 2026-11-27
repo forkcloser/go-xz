@@ -7,8 +7,6 @@ package xz //nolint:testpackage // white-box: from outside, the workers a file g
 import (
 	"bytes"
 	"testing"
-
-	"github.com/forkcloser/go-xz/v2/internal/sysmem"
 )
 
 // TestAffordableWorkers: a reader "uses as many of its workers as keep all
@@ -85,8 +83,8 @@ func TestAffordableWorkers(t *testing.T) {
 }
 
 // TestMemoryLimit: the limit is WithMemoryLimit's when it is given, and
-// without it a quarter of the memory the system reports for the process,
-// or 1 GiB when the system reports none.
+// 1 GiB without it, whatever the machine and whatever limit the program
+// runs under.
 func TestMemoryLimit(t *testing.T) {
 	t.Parallel()
 
@@ -104,13 +102,8 @@ func TestMemoryLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := int64(unknownMemoryLimit)
-	if total := sysmem.Total(); total != 0 {
-		want = int64(total / 4)
-	}
-
-	if got := memoryLimit(plain); got != want {
-		t.Errorf("without the option: %d, want %d", got, want)
+	if got := memoryLimit(plain); got != 1<<30 {
+		t.Errorf("without the option: %d, want 1 GiB", got)
 	}
 }
 
