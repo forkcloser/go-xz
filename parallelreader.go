@@ -14,8 +14,6 @@ import (
 	"runtime"
 	"slices"
 	"sync"
-
-	"github.com/forkcloser/go-xz/v2/internal/sysmem"
 )
 
 // A block decoder that panicked instead of returning.
@@ -163,13 +161,9 @@ type blockWork struct {
 // Nothing in the format bounds a block, and a reader with workers holds
 // blocks whole: without a limit, a file of a few hundred kilobytes makes
 // its reader hold gigabytes. The limit is the caller's (WithMemoryLimit),
-// or this share of the memory the process can have, which is what xz takes
-// for --memlimit-mt-decompress; and unknownMemoryLimit where the system
-// does not say how much that is.
-const (
-	memoryShare        = 4
-	unknownMemoryLimit = 1 << 30
-)
+// and this one when the caller sets none: the same on every machine, since
+// how much of a machine a reader may take is its program's to say.
+const defaultMemoryLimit = 1 << 30
 
 // memoryLimit is what a reader with o's workers may hold for its blocks.
 func memoryLimit(o options) int64 {
@@ -177,13 +171,7 @@ func memoryLimit(o options) int64 {
 		return o.memoryLimit
 	}
 
-	total := sysmem.Total()
-	if total == 0 {
-		return unknownMemoryLimit
-	}
-
-	// #nosec G115 -- a quarter of a uint64 fits an int64
-	return int64(total / memoryShare)
+	return defaultMemoryLimit
 }
 
 // affordable is how many of the workers asked for a file's blocks allow

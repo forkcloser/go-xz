@@ -84,20 +84,10 @@ golangci:
           # os errors are *PathError and *LinkError: the operation and the
           # path are already in them.
           - os
-          # go-xos hands on os's errors as they are.
-          - github.com/forkcloser/go-xos
-      depguard:
-        rules:
-          main:
-            allow:
-              # The files the package opens itself, the control groups'
-              # listings of the memory the process may use, through the one
-              # way this organization opens files.
-              - github.com/forkcloser/go-xos
       forbidigo:
         forbid:
-          # The codec reads an io.Reader and writes an io.Writer; what the
-          # package opens by itself goes through go-xos.
+          # The codec reads an io.Reader and writes an io.Writer, and opens
+          # no file. One it came to open would go through go-xos.
           - pattern: '^os\.(Open|OpenFile|Create|CreateTemp|MkdirTemp|ReadFile|WriteFile|ReadDir|Rename|Stat|Truncate)$'
             msg: "open files through github.com/forkcloser/go-xos"
       exhaustive:
